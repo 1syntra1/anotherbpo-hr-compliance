@@ -8,44 +8,45 @@ Work top to bottom. Tick each box as you go.
 
 ---
 
-## Part 1 — Create a GitHub access token
-cPanel needs a token to clone a **private** repo. Use a fine-grained token (read-only).
+> **Important (Afrihost / most cPanel hosts):** the Git Version Control tool **rejects
+> tokens or passwords embedded in the clone URL** ("The clone URL cannot include a
+> password"). Private repos must be cloned over **SSH using a deploy key**, as below.
 
-- [ ] 1.1  Go to **https://github.com** and sign in as `1syntra1`.
-- [ ] 1.2  Click your **profile photo** (top-right) → **Settings**.
-- [ ] 1.3  Bottom of the left menu → **Developer settings**.
-- [ ] 1.4  **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
-- [ ] 1.5  **Token name:** `cPanel deploy`.
-- [ ] 1.6  **Expiration:** pick a date (e.g. 90 days — you can regenerate later).
-- [ ] 1.7  **Resource owner:** `1syntra1`.
-- [ ] 1.8  **Repository access:** choose **Only select repositories** → select
-        `anotherbpo-hr-compliance`.
-- [ ] 1.9  **Permissions** → **Repository permissions** → **Contents** → set to **Read-only**.
-        (That is all cPanel needs to clone and pull.)
-- [ ] 1.10 Click **Generate token** → **copy the token now** (GitHub shows it only once).
-        Keep it somewhere safe and private.
-
-> Classic token alternative: Developer settings → **Tokens (classic)** → Generate new token →
-> tick the **`repo`** scope. Works too, but grants broader access than the fine-grained option above.
+## Part 1 — Generate an SSH key in cPanel
+- [ ] 1.1  cPanel → **SSH Access** → **Manage SSH Keys**.
+- [ ] 1.2  Click **Generate a New Key**.
+- [ ] 1.3  **Key name:** leave the default (`id_rsa`) — git picks it up automatically.
+- [ ] 1.4  **Passphrase:** leave **empty** (so automated pulls work).
+- [ ] 1.5  Click **Generate Key**.
+- [ ] 1.6  Back on Manage SSH Keys → find the key → **Manage** → **Authorize**.
+- [ ] 1.7  **View / Download** the **Public Key** → copy the whole text (starts with `ssh-rsa …`).
 
 ---
 
-## Part 2 — Build your clone URL
-- [ ] 2.1  Take this template and paste your token where shown:
-
-```
-https://1syntra1:YOUR_TOKEN_HERE@github.com/1syntra1/anotherbpo-hr-compliance.git
-```
-
-- [ ] 2.2  Treat this URL like a password — it contains your token. Don't share or email it.
+## Part 2 — Add the public key to GitHub as a Deploy Key
+- [ ] 2.1  GitHub → repo **anotherbpo-hr-compliance** → **Settings**.
+- [ ] 2.2  Left menu → **Deploy keys** → **Add deploy key**.
+- [ ] 2.3  **Title:** `Afrihost cPanel`.
+- [ ] 2.4  **Key:** paste the public key from 1.7.
+- [ ] 2.5  Leave **Allow write access** *unchecked* (read-only is enough).
+- [ ] 2.6  Click **Add key**.
 
 ---
 
-## Part 3 — Clone the repo into cPanel
+## Part 3 — Clone the repo into cPanel (SSH URL)
 - [ ] 3.1  cPanel → **Git™ Version Control** → **Create**.
-- [ ] 3.2  **Clone URL:** paste the URL from Part 2.
+- [ ] 3.2  **Clone URL** — use the SSH form (no token, no password):
+
+```
+git@github.com:1syntra1/anotherbpo-hr-compliance.git
+```
+
 - [ ] 3.3  **Repository Path:** `hr_audit`  (creates `/home/<youruser>/hr_audit`).
 - [ ] 3.4  Click **Create**. Wait for cPanel to finish cloning the files.
+
+> If this fails with a host-authenticity / `known_hosts` error: open cPanel's **SSH Access
+> → Terminal** (or SSH in) and run `ssh -T git@github.com`, type `yes` to accept GitHub's
+> fingerprint, then retry the clone.
 
 ---
 
@@ -107,5 +108,6 @@ When you make changes locally and want them live:
   use later, migrate to MySQL (cPanel provides it).
 - Trashed projects auto-purge after the 30-day hold the next time the Trash/GBS page loads —
   no cron job needed.
-- If the clone fails with an auth error, your token is wrong/expired — regenerate it (Part 1)
-  and update the URL in **Git Version Control → Manage**.
+- If the clone fails with an auth error, the SSH deploy key isn't matching — re-copy the
+  public key (Part 1.7) into the repo's **Deploy keys** (Part 2), and make sure you used the
+  `git@github.com:...` SSH URL, not an `https://` one.
