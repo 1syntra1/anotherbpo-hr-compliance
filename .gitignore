@@ -1,0 +1,27 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+venv/
+env/
+.venv/
+
+# ── App data (each environment keeps its own SQLite DB & uploads) ──
+data/hr_audit.db
+data/uploads/
+data/*.db
+
+# ── Company logo / branding assets (not shipped to the public test) ──
+static/images/logo.png
+
+# ── Local / editor / OS ──
+.claude/
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
+
+# ── Windows launcher (local only) ──
+start.bat

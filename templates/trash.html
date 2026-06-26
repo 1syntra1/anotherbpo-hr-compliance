@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Trash Bin{% endblock %}
+{% block page_title %}Trash Bin — Deleted Submissions{% endblock %}
+
+{% block content %}
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <h5 class="fw-bold text-navy mb-1">
+        <i class="bi bi-trash3-fill me-2 text-danger"></i>Trash Bin
+        <span class="badge bg-light text-secondary border ms-1" style="font-size:.7rem;">Admin only</span>
+      </h5>
+      <p class="text-muted small mb-0">
+        Deleted submissions land here. You can <strong>restore</strong> them, or
+        <strong>approve permanent deletion</strong> — which starts a {{ hold_days }}-day hold
+        before the item is purged for good.
+      </p>
+    </div>
+    <a href="{{ url_for('gbs') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to GBS Projects
+    </a>
+  </div>
+</div>
+
+{% if not awaiting and not pending %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-trash3" style="font-size:3rem;color:#cbd5e1;"></i>
+    <h5 class="fw-bold text-navy mt-3">The trash bin is empty</h5>
+    <p class="text-muted mb-0">Deleted submissions will appear here for review.</p>
+  </div>
+</div>
+{% endif %}
+
+<!-- ═══ Awaiting decision ═══ -->
+{% if awaiting %}
+<div class="mb-4">
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h6 class="fw-bold text-navy mb-0"><i class="bi bi-hourglass-split me-1 text-warning"></i>Awaiting Decision</h6>
+    <span class="badge bg-light text-secondary border">{{ awaiting|length }}</span>
+    <div class="flex-grow-1" style="height:1px;background:#e2e8f0;"></div>
+  </div>
+
+  <div class="row g-3">
+    {% for p in awaiting %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #94a3b8 !important;">
+        <div class="card-body p-4">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <div>
+              <div class="fw-bold fs-5 text-navy">{{ p.quarter }} {{ p.year }}</div>
+              <small class="text-muted">{{ p.company_name or 'Unnamed entity' }}</small>
+            </div>
+            <span class="badge bg-light text-secondary border">{{ p.status }}</span>
+          </div>
+
+          <div class="small text-muted mb-3">
+            <div><i class="bi bi-person me-1"></i>Deleted by <strong>{{ p.deleted_by or 'unknown' }}</strong></div>
+            <div><i class="bi bi-calendar-x me-1"></i>{{ (p.deleted_at or '')[:16] }}</div>
+            <div><i class="bi bi-list-check me-1"></i>Checklist was {{ p.cl_done }}/{{ p.cl_total }} ({{ p.cl_pct }}%)</div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <form method="POST" action="{{ url_for('trash_restore', project_id=p.id) }}" class="flex-grow-1">
+              <button type="submit" class="btn btn-teal btn-sm w-100">
+                <i class="bi bi-arrow-counterclockwise me-1"></i>Restore
+              </button>
+            </form>
+            <form method="POST" action="{{ url_for('trash_approve', project_id=p.id) }}" class="flex-grow-1"
+                  onsubmit="return confirm('Approve permanent deletion of {{ p.quarter }} {{ p.year }}?\n\nA {{ hold_days }}-day hold will begin. It will be permanently purged after {{ hold_days }} days unless you restore it.');">
+              <button type="submit" class="btn btn-outline-danger btn-sm w-100">
+                <i class="bi bi-shield-x me-1"></i>Approve deletion
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ═══ Pending permanent deletion (countdown) ═══ -->
+{% if pending %}
+<div class="mb-4">
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h6 class="fw-bold text-navy mb-0"><i class="bi bi-stopwatch me-1 text-danger"></i>Pending Permanent Deletion</h6>
+    <span class="badge bg-danger">{{ pending|length }}</span>
+    <div class="flex-grow-1" style="height:1px;background:#e2e8f0;"></div>
+  </div>
+
+  <div class="row g-3">
+    {% for p in pending %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #e74c3c !important;">
+        <div class="card-body p-4">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <div>
+              <div class="fw-bold fs-5 text-navy">{{ p.quarter }} {{ p.year }}</div>
+              <small class="text-muted">{{ p.company_name or 'Unnamed entity' }}</small>
+            </div>
+            <span class="badge bg-danger">Purging</span>
+          </div>
+
+          <!-- Countdown -->
+          <div class="alert alert-danger py-2 px-3 mb-3 d-flex align-items-center gap-2">
+            <i class="bi bi-stopwatch-fill"></i>
+            <div>
+              <div class="fw-bold" style="font-size:1.1rem;line-height:1;">
+                {{ p.days_left }} day{% if p.days_left != 1 %}s{% endif %} left
+              </div>
+              <small>Purges on {{ p.purge_date_str }}</small>
+            </div>
+          </div>
+
+          <div class="small text-muted mb-3">
+            <div><i class="bi bi-person-check me-1"></i>Approved by <strong>{{ p.purge_approved_by or 'admin' }}</strong></div>
+            <div><i class="bi bi-calendar-x me-1"></i>Deleted {{ (p.deleted_at or '')[:16] }}</div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <form method="POST" action="{{ url_for('trash_restore', project_id=p.id) }}" class="flex-grow-1">
+              <button type="submit" class="btn btn-teal btn-sm w-100">
+                <i class="bi bi-arrow-counterclockwise me-1"></i>Restore
+              </button>
+            </form>
+            <form method="POST" action="{{ url_for('trash_cancel', project_id=p.id) }}" class="flex-grow-1">
+              <button type="submit" class="btn btn-outline-secondary btn-sm w-100">
+                <i class="bi bi-x-circle me-1"></i>Cancel hold
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

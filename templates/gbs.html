@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% from "_checklist.html" import render_checklist %}
+{% block title %}GBS Incentive Claim{% endblock %}
+{% block page_title %}GBS — Global Business Services Incentive Claim (the dtic){% endblock %}
+
+{% block content %}
+
+<!-- Tabs (Submission Checklist first) -->
+<ul class="nav nav-pills mb-4 gap-2" id="gbsTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-checklist-btn" data-bs-toggle="pill"
+            data-bs-target="#tab-checklist" type="button" role="tab">
+      <i class="bi bi-list-check me-1"></i>Submission Checklist
+      <span class="badge bg-white text-dark ms-1">{{ cl_done }}/{{ cl_total }}</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-claim-btn" data-bs-toggle="pill"
+            data-bs-target="#tab-claim" type="button" role="tab">
+      <i class="bi bi-clipboard-data me-1"></i>Claim Details
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- ═══ TAB 1: Submission Checklist ═══ -->
+  <div class="tab-pane fade show active" id="tab-checklist" role="tabpanel">
+    {{ render_checklist('gbs', checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks) }}
+  </div>
+
+  <!-- ═══ TAB 2: Claim Details ═══ -->
+  <div class="tab-pane fade" id="tab-claim" role="tabpanel">
+    <div class="row g-4">
+      <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+          <div class="card-header bg-white border-bottom fw-semibold py-3">
+            <i class="bi bi-clipboard-data me-2 text-teal"></i>GBS Claim Particulars
+          </div>
+          <div class="card-body">
+            <form method="POST" action="{{ url_for('gbs') }}">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Company / Entity Name</label>
+                  <input type="text" name="company_name" class="form-control form-control-sm"
+                         value="{{ claim.company_name if claim else '' }}">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold small">Claim Quarter</label>
+                  <select name="claim_quarter" class="form-select form-select-sm">
+                    {% set q = claim.claim_quarter if claim else '' %}
+                    <option value="">—</option>
+                    <option value="Q1 (1 Jan)" {% if q == 'Q1 (1 Jan)' %}selected{% endif %}>Q1 (1 Jan)</option>
+                    <option value="Q2 (1 Apr)" {% if q == 'Q2 (1 Apr)' %}selected{% endif %}>Q2 (1 Apr)</option>
+                    <option value="Q3 (1 Jul)" {% if q == 'Q3 (1 Jul)' %}selected{% endif %}>Q3 (1 Jul)</option>
+                    <option value="Q4 (1 Oct)" {% if q == 'Q4 (1 Oct)' %}selected{% endif %}>Q4 (1 Oct)</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold small">Claim Year</label>
+                  <input type="text" name="claim_year" class="form-control form-control-sm"
+                         value="{{ claim.claim_year if claim else current_year }}" placeholder="2026">
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">dtic Notification Date</label>
+                  <input type="date" name="dtic_notification_date" class="form-control form-control-sm"
+                         value="{{ claim.dtic_notification_date if claim else '' }}">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Submission Deadline</label>
+                  <input type="date" name="submission_deadline" class="form-control form-control-sm"
+                         value="{{ claim.submission_deadline if claim else '' }}">
+                  <small class="text-muted">Usually 30 days after notification</small>
+                </div>
+
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold small">No. of Campaigns</label>
+                  <input type="number" name="num_campaigns" class="form-control form-control-sm" min="0"
+                         value="{{ claim.num_campaigns if claim else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold small">Qualifying Employees</label>
+                  <input type="number" name="num_qualifying_employees" class="form-control form-control-sm" min="0"
+                         value="{{ claim.num_qualifying_employees if claim else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold small">Export Revenue (R)</label>
+                  <input type="number" step="0.01" name="export_revenue" class="form-control form-control-sm" min="0"
+                         value="{{ claim.export_revenue if claim else '' }}">
+                  <small class="text-muted">Must match Site Visit Report</small>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Operational Premises</label>
+                  <input type="text" name="premises" class="form-control form-control-sm"
+                         value="{{ claim.premises if claim else '' }}" placeholder="e.g. JHB &amp; CPT">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Appointed External Auditor</label>
+                  <input type="text" name="auditor" class="form-control form-control-sm"
+                         value="{{ claim.auditor if claim else '' }}">
+                </div>
+
+                <div class="col-12">
+                  <label class="form-label fw-semibold small">Notes</label>
+                  <textarea name="notes" class="form-control form-control-sm" rows="2"
+                            placeholder="Any additional claim notes...">{{ claim.notes if claim else '' }}</textarea>
+                </div>
+              </div>
+              <button type="submit" class="btn btn-teal btn-sm mt-3 px-4">
+                <i class="bi bi-save me-1"></i>Save Claim Details
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary side panel -->
+      <div class="col-lg-4">
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-body">
+            <h6 class="fw-bold text-navy mb-3"><i class="bi bi-info-circle me-2 text-teal"></i>About the GBS Incentive</h6>
+            <p class="text-secondary small mb-2">
+              The Global Business Services (GBS) incentive is administered by the
+              <strong>Department of Trade, Industry and Competition (the dtic)</strong>
+              to support offshore service delivery and job creation.
+            </p>
+            <ul class="small text-secondary mb-0 ps-3">
+              <li class="mb-1">Employees must work <strong>40+ hours/week</strong> (excl. lunch).</li>
+              <li class="mb-1">No job displacement of local roles.</li>
+              <li class="mb-1">Offshore activity must be proven via contracts &amp; invoices.</li>
+              <li>Claims require external auditor sign-off.</li>
+            </ul>
+          </div>
+        </div>
+
+        {% if claim and claim.export_revenue %}
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-4">
+            <small class="text-muted text-uppercase" style="letter-spacing:.05em;">Export Revenue Claimed</small>
+            <div class="fs-3 fw-bold text-teal mt-1">
+              R {{ "{:,.2f}".format(claim.export_revenue) }}
+            </div>
+            {% if claim.claim_quarter %}
+            <span class="badge compliance-badge-teal mt-2">{{ claim.claim_quarter }} {{ claim.claim_year }}</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div><!-- /tab-content -->
+{% endblock %}

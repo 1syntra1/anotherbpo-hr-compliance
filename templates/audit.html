@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Audit Log{% endblock %}
+{% block page_title %}Audit Log{% endblock %}
+
+{% set cat_meta = {
+  'auth':    ('bi-box-arrow-in-right', 'primary'),
+  'project': ('bi-folder', 'info'),
+  'task':    ('bi-list-check', 'secondary'),
+  'trash':   ('bi-trash3', 'danger'),
+  'user':    ('bi-people', 'warning')
+} %}
+
+{% block content %}
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+      <div>
+        <h5 class="fw-bold text-navy mb-1">
+          <i class="bi bi-clock-history me-2 text-teal"></i>Audit Log
+          <span class="badge bg-light text-secondary border ms-1" style="font-size:.7rem;">Admin only</span>
+        </h5>
+        <p class="text-muted small mb-0">
+          Every sign-in and change is recorded here — project edits, task changes,
+          deletions, and trash actions.
+        </p>
+      </div>
+      <span class="badge bg-light text-secondary border align-self-center">
+        Showing {{ shown }} of {{ total_entries }} entries
+      </span>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" action="{{ url_for('audit') }}" class="row g-2 align-items-end">
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold mb-1">User</label>
+        <select name="user" class="form-select form-select-sm">
+          <option value="">All users</option>
+          {% for u in users %}
+          <option value="{{ u }}" {% if u == f_user %}selected{% endif %}>{{ u }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold mb-1">Category</label>
+        <select name="category" class="form-select form-select-sm">
+          <option value="">All categories</option>
+          {% for key, label in categories %}
+          <option value="{{ key }}" {% if key == f_category %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold mb-1">From</label>
+        <input type="date" name="from" value="{{ f_from }}" class="form-control form-control-sm">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small fw-semibold mb-1">To</label>
+        <input type="date" name="to" value="{{ f_to }}" class="form-control form-control-sm">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label small fw-semibold mb-1">Search</label>
+        <input type="text" name="q" value="{{ f_search }}" class="form-control form-control-sm"
+               placeholder="Search detail...">
+      </div>
+      <div class="col-12 col-md-2 d-flex gap-2">
+        <button type="submit" class="btn btn-teal btn-sm flex-grow-1">
+          <i class="bi bi-funnel me-1"></i>Filter
+        </button>
+        {% if any_filter %}
+        <a href="{{ url_for('audit') }}" class="btn btn-outline-secondary btn-sm" title="Clear filters">
+          <i class="bi bi-x-lg"></i>
+        </a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Log table -->
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle" style="font-size:.85rem;">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-4" style="white-space:nowrap;">Timestamp</th>
+            <th>User</th>
+            <th>Category</th>
+            <th>Action</th>
+            <th class="pe-4">Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          {% set meta = cat_meta.get(e.category, ('bi-dot', 'secondary')) %}
+          <tr>
+            <td class="ps-4 text-muted" style="white-space:nowrap;">{{ (e.ts or '')[:19] }}</td>
+            <td>
+              <span class="fw-semibold">{{ e.username }}</span>
+              {% if e.role == 'admin' %}
+              <i class="bi bi-shield-lock-fill text-warning ms-1" title="admin" style="font-size:.7rem;"></i>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge bg-{{ meta[1] }}-subtle text-{{ meta[1] }} border border-{{ meta[1] }}-subtle">
+                <i class="bi {{ meta[0] }} me-1"></i>{{ e.category }}
+              </span>
+            </td>
+            <td><code style="font-size:.78rem;color:#475569;">{{ e.action }}</code></td>
+            <td class="pe-4">{{ e.detail }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-5">
+              <i class="bi bi-inbox d-block mb-2" style="font-size:2rem;color:#cbd5e1;"></i>
+              No audit entries match your filters.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

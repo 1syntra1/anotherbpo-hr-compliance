@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block title %}WSP — Workplace Skills Plan{% endblock %}
+{% block page_title %}WSP — Workplace Skills Plan &amp; ATR{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- Left column -->
+  <div class="col-lg-4">
+
+    <!-- SETA / Company Info -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-building me-2 text-warning"></i>SETA &amp; Skills Levy Info
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('wsp') }}">
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">SETA</label>
+            <select name="seta" class="form-select form-select-sm">
+              <option value="">— Select SETA —</option>
+              {% for s in setas %}
+              <option value="{{ s }}" {% if company_info and company_info.seta == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">SDL Number</label>
+            <input type="text" name="sdl_number" class="form-control form-control-sm"
+                   value="{{ company_info.sdl_number if company_info else '' }}"
+                   placeholder="L000000000000">
+          </div>
+          <div class="mb-3">
+            <label class="form-label form-label-sm fw-semibold">Annual Skills Levy (R)</label>
+            <input type="number" name="skills_levy" step="0.01" min="0"
+                   class="form-control form-control-sm"
+                   value="{{ company_info.skills_levy if company_info else '' }}">
+          </div>
+          <button type="submit" class="btn btn-warning btn-sm w-100 text-white">
+            <i class="bi bi-save me-1"></i>Save Info
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Training Record -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-plus-circle me-2 text-success"></i>Add Training Record
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('wsp_training') }}">
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Employee</label>
+            <select name="employee_id" class="form-select form-select-sm">
+              <option value="">— Select Employee —</option>
+              {% for emp in employees %}
+              <option value="{{ emp.id }}">{{ emp.last_name }}, {{ emp.first_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Intervention / Programme</label>
+            <input type="text" name="intervention_type" class="form-control form-control-sm" required
+                   placeholder="e.g. First Aid Level 2">
+          </div>
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label form-label-sm fw-semibold">NQF Level</label>
+              <select name="nqf_level" class="form-select form-select-sm">
+                <option value="">—</option>
+                {% for n in range(1, 11) %}
+                <option value="{{ n }}">Level {{ n }}</option>
+                {% endfor %}
+                <option value="Non-NQF">Non-NQF</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label form-label-sm fw-semibold">Cost (R)</label>
+              <input type="number" name="cost" step="0.01" min="0" class="form-control form-control-sm">
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Provider</label>
+            <input type="text" name="provider" class="form-control form-control-sm"
+                   placeholder="Training provider name">
+          </div>
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label form-label-sm fw-semibold">Target Date</label>
+              <input type="date" name="target_date" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label form-label-sm fw-semibold">Actual Date</label>
+              <input type="date" name="actual_date" class="form-control form-control-sm">
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Certificate / Reference</label>
+            <input type="text" name="certificate" class="form-control form-control-sm"
+                   placeholder="Certificate number or reference">
+          </div>
+          <div class="mb-3">
+            <label class="form-label form-label-sm fw-semibold">Status</label>
+            <select name="status" class="form-select form-select-sm">
+              <option value="Planned">Planned (WSP)</option>
+              <option value="Completed">Completed (ATR)</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-success btn-sm w-100">
+            <i class="bi bi-plus-circle me-1"></i>Add Record
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Generate Reports -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-file-earmark-spreadsheet me-2 text-primary"></i>Generate Reports
+      </div>
+      <div class="card-body d-grid gap-2">
+        <form method="POST" action="{{ url_for('wsp_generate') }}">
+          <input type="hidden" name="report_type" value="wsp">
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-download me-1"></i>WSP Report (.xlsx)
+          </button>
+        </form>
+        <form method="POST" action="{{ url_for('wsp_generate') }}">
+          <input type="hidden" name="report_type" value="atr">
+          <button type="submit" class="btn btn-outline-primary w-100">
+            <i class="bi bi-download me-1"></i>ATR Report (.xlsx)
+          </button>
+        </form>
+        <form method="POST" action="{{ url_for('wsp_generate') }}">
+          <input type="hidden" name="report_type" value="word">
+          <button type="submit" class="btn btn-outline-secondary w-100">
+            <i class="bi bi-file-word me-1"></i>WSP Report (.docx)
+          </button>
+        </form>
+        <small class="text-muted text-center">Submit WSP + ATR to your SETA by 30 June</small>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right column: Training records table -->
+  <div class="col-lg-8">
+
+    <!-- Summary strip -->
+    <div class="row g-3 mb-3">
+      <div class="col-4">
+        <div class="card border-0 shadow-sm text-center py-3">
+          <div class="fs-3 fw-bold text-primary">
+            {{ training | selectattr('status','equalto','Planned') | list | length }}
+          </div>
+          <small class="text-muted">Planned (WSP)</small>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="card border-0 shadow-sm text-center py-3">
+          <div class="fs-3 fw-bold text-success">
+            {{ training | selectattr('status','equalto','Completed') | list | length }}
+          </div>
+          <small class="text-muted">Completed (ATR)</small>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="card border-0 shadow-sm text-center py-3">
+          <div class="fs-3 fw-bold text-secondary">{{ training | length }}</div>
+          <small class="text-muted">Total Records</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Training records table -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">
+          <i class="bi bi-journal-text me-2 text-secondary"></i>Training Records
+        </span>
+        <div class="d-flex gap-2">
+          <select id="status-filter" class="form-select form-select-sm" style="width:140px">
+            <option value="">All Status</option>
+            <option value="Planned">Planned</option>
+            <option value="Completed">Completed</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small" id="training-table">
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3">Employee</th>
+                <th>Programme</th>
+                <th>NQF</th>
+                <th>Provider</th>
+                <th>Cost (R)</th>
+                <th>Target Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rec in training %}
+              <tr data-status="{{ rec.status }}">
+                <td class="ps-3 fw-semibold">{{ rec.employee_name or '—' }}</td>
+                <td>{{ rec.intervention_type or '—' }}</td>
+                <td class="text-center">
+                  {% if rec.nqf_level %}
+                    <span class="badge bg-secondary-subtle text-secondary border">NQF {{ rec.nqf_level }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td>{{ rec.provider or '—' }}</td>
+                <td class="text-end">
+                  {% if rec.cost %}R {{ '{:,.2f}'.format(rec.cost) }}{% else %}—{% endif %}
+                </td>
+                <td>{{ rec.target_date or '—' }}</td>
+                <td>
+                  {% if rec.status == 'Planned' %}
+                    <span class="badge compliance-badge-amber">Planned</span>
+                  {% elif rec.status == 'Completed' %}
+                    <span class="badge compliance-badge-green">Completed</span>
+                  {% elif rec.status == 'In Progress' %}
+                    <span class="badge bg-info-subtle text-info border border-info-subtle">In Progress</span>
+                  {% else %}
+                    <span class="badge bg-secondary-subtle text-secondary border">{{ rec.status }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-5">
+                  <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                  No training records yet. Add one using the form on the left.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // Status filter for training table
+  document.getElementById('status-filter')?.addEventListener('change', function () {
+    const val = this.value.toLowerCase();
+    document.querySelectorAll('#training-table tbody tr[data-status]').forEach(row => {
+      row.style.display = (!val || row.dataset.status.toLowerCase() === val) ? '' : 'none';
+    });
+  });
+</script>
+{% endblock %}

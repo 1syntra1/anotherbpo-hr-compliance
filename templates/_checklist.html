@@ -1,0 +1,255 @@
+{# ════════════════════════════════════════════════════════════════
+   Reusable submission-checklist macro.
+   Usage:
+     {% from "_checklist.html" import render_checklist %}
+     {{ render_checklist('gbs', checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks) }}
+════════════════════════════════════════════════════════════════ #}
+
+{% macro render_checklist(module, checklist, states, done, total, pct, custom_tasks={}, hidden_tasks=set()) %}
+<div class="checklist-wrap" data-module="{{ module }}" data-total="{{ total }}">
+
+  <!-- Header + overall progress -->
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+        <div>
+          <h5 class="fw-bold text-navy mb-1">
+            <i class="bi bi-list-check me-2 text-teal"></i>{{ checklist.title }}
+          </h5>
+          <p class="text-muted small mb-0">{{ checklist.subtitle }}</p>
+        </div>
+        <div class="text-end">
+          {% if checklist.deadline %}
+          <span class="badge compliance-badge-amber mb-1">
+            <i class="bi bi-clock-history me-1"></i>{{ checklist.deadline }}
+          </span><br/>
+          {% endif %}
+          <form method="POST" action="{{ url_for('checklist_reset', module=module) }}"
+                onsubmit="return confirm('Reset all checklist progress for this module?');" class="d-inline">
+            <button type="submit" class="btn btn-link btn-sm text-muted p-0" style="font-size:.78rem;">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Reset checklist
+            </button>
+          </form>
+          {% if hidden_tasks %}
+          <br/>
+          <form method="POST" action="{{ url_for('checklist_restore_defaults', module=module) }}"
+                onsubmit="return confirm('Restore all hidden default tasks?');" class="d-inline">
+            <button type="submit" class="btn btn-link btn-sm text-teal p-0" style="font-size:.78rem;">
+              <i class="bi bi-arrow-up-circle me-1"></i>Restore {{ hidden_tasks|length }} hidden default{% if hidden_tasks|length != 1 %}s{% endif %}
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if checklist.intro %}
+      <p class="text-secondary small mb-3">{{ checklist.intro }}</p>
+      {% endif %}
+
+      <!-- Overall progress bar -->
+      <div class="d-flex align-items-center gap-3">
+        <div class="progress flex-grow-1" style="height:12px;">
+          <div class="progress-bar checklist-overall-bar
+                      {% if pct == 100 %}bg-success{% else %}bg-teal{% endif %}"
+               role="progressbar" style="width:{{ pct }}%; background-color:var(--cb-teal-dark);">
+          </div>
+        </div>
+        <span class="fw-bold text-navy checklist-overall-label" style="min-width:120px;text-align:right;">
+          <span class="cl-done">{{ done }}</span> / <span class="cl-total">{{ total }}</span> complete
+          (<span class="cl-pct">{{ pct }}</span>%)
+        </span>
+      </div>
+      {% if pct == 100 %}
+      <div class="alert alert-success d-flex align-items-center gap-2 mt-3 mb-0 py-2 checklist-complete-banner">
+        <i class="bi bi-check-circle-fill"></i>
+        <span class="small fw-semibold">All steps complete — this submission is ready to go.</span>
+      </div>
+      {% else %}
+      <div class="alert alert-success d-flex align-items-center gap-2 mt-3 mb-0 py-2 checklist-complete-banner d-none">
+        <i class="bi bi-check-circle-fill"></i>
+        <span class="small fw-semibold">All steps complete — this submission is ready to go.</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Expand / collapse all -->
+  <div class="d-flex justify-content-end gap-2 mb-2">
+    <button type="button" class="btn btn-sm btn-outline-secondary checklist-expand-all"
+            data-target="#checklist-{{ module }}">
+      <i class="bi bi-arrows-expand me-1"></i>Expand all
+    </button>
+    <button type="button" class="btn btn-sm btn-outline-secondary checklist-collapse-all"
+            data-target="#checklist-{{ module }}">
+      <i class="bi bi-arrows-collapse me-1"></i>Collapse all
+    </button>
+  </div>
+
+  <!-- Steps accordion (panels open independently) -->
+  <div class="accordion checklist-accordion" id="checklist-{{ module }}">
+    {% for step in checklist.steps %}
+      {% set step_items_visible = step['items'] | rejectattr('key', 'in', hidden_tasks) | list %}
+      {% set step_custom = custom_tasks.get(step.key, []) %}
+      {% set step_count = step_items_visible|length + step_custom|length %}
+      {# compute done count for this step (predefined + custom) #}
+      {% set ns = namespace(done=0) %}
+      {% for it in step_items_visible %}
+        {% if states.get(it.key) %}{% set ns.done = ns.done + 1 %}{% endif %}
+      {% endfor %}
+      {% for ct in step_custom %}
+        {% if states.get(ct.key) %}{% set ns.done = ns.done + 1 %}{% endif %}
+      {% endfor %}
+      {% set step_complete = (ns.done == step_count) and step_count > 0 %}
+
+      <div class="accordion-item border-0 shadow-sm mb-2 checklist-step"
+           data-step="{{ step.key }}" data-count="{{ step_count }}">
+        <h2 class="accordion-header">
+          <button class="accordion-button {% if not loop.first %}collapsed{% endif %} checklist-step-header"
+                  type="button" data-bs-toggle="collapse"
+                  data-bs-target="#step-{{ module }}-{{ step.key }}">
+            <span class="step-check-icon me-2">
+              <i class="bi {% if step_complete %}bi-check-circle-fill text-success{% else %}bi-circle text-muted{% endif %}"></i>
+            </span>
+            <span class="flex-grow-1 fw-semibold">{{ step.title }}</span>
+            {% if step.owner %}
+            <span class="badge bg-light text-secondary border me-2" style="font-size:.68rem;">
+              <i class="bi bi-person-badge me-1"></i>{{ step.owner }}
+            </span>
+            {% endif %}
+            <span class="badge step-count-badge {% if step_complete %}bg-success{% else %}bg-secondary{% endif %} me-2">
+              <span class="step-done-count">{{ ns.done }}</span>/<span class="step-total-count">{{ step_count }}</span>
+            </span>
+          </button>
+        </h2>
+        <div id="step-{{ module }}-{{ step.key }}"
+             class="accordion-collapse collapse {% if loop.first %}show{% endif %}">
+          <div class="accordion-body">
+
+            {% if step.note %}
+            <div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-3">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <span class="small">{{ step.note }}</span>
+            </div>
+            {% endif %}
+
+            <div class="checklist-items" data-step="{{ step.key }}">
+              {% for item in step_items_visible %}
+              {% set checked = states.get(item.key) %}
+              <div class="form-check checklist-item-row default-task-row d-flex align-items-start gap-2 py-1">
+                <input class="form-check-input checklist-checkbox mt-1" type="checkbox"
+                       id="cl-{{ module }}-{{ item.key }}"
+                       data-module="{{ module }}"
+                       data-item="{{ item.key }}"
+                       data-step="{{ step.key }}"
+                       {% if checked %}checked{% endif %}>
+                <label class="form-check-label small flex-grow-1 {% if checked %}text-decoration-line-through text-muted{% endif %}"
+                       for="cl-{{ module }}-{{ item.key }}">
+                  {{ item.text }}
+                </label>
+                <button type="button" class="btn btn-link btn-sm text-muted p-0 hide-task-btn opacity-50"
+                        data-item-key="{{ item.key }}" data-module="{{ module }}" data-step="{{ step.key }}"
+                        title="Remove this task from this project">
+                  <i class="bi bi-x-lg" style="font-size:.85rem;"></i>
+                </button>
+              </div>
+              {% endfor %}
+
+              {# ── User-added custom tasks ── #}
+              {% for ct in step_custom %}
+              {% set checked = states.get(ct.key) %}
+              <div class="form-check checklist-item-row custom-task-row d-flex align-items-start gap-2 py-1"
+                   data-task-id="{{ ct.id }}">
+                <input class="form-check-input checklist-checkbox mt-1" type="checkbox"
+                       id="cl-{{ module }}-{{ ct.key }}"
+                       data-module="{{ module }}"
+                       data-item="{{ ct.key }}"
+                       data-step="{{ step.key }}"
+                       {% if checked %}checked{% endif %}>
+                <label class="form-check-label small flex-grow-1 {% if checked %}text-decoration-line-through text-muted{% endif %}"
+                       for="cl-{{ module }}-{{ ct.key }}">
+                  {{ ct.text }}
+                  <span class="badge bg-light text-secondary border ms-1" style="font-size:.6rem;">custom</span>
+                </label>
+                <button type="button" class="btn btn-link btn-sm text-danger p-0 delete-task-btn"
+                        data-task-id="{{ ct.id }}" data-module="{{ module }}" data-step="{{ step.key }}"
+                        title="Delete this task">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+              {% endfor %}
+            </div>
+
+            {# ── Add a new task to this step ── #}
+            <div class="add-task-form mt-2 pt-2 border-top">
+              <div class="input-group input-group-sm">
+                <span class="input-group-text bg-light"><i class="bi bi-plus-lg"></i></span>
+                <input type="text" class="form-control add-task-input"
+                       placeholder="Add your own task to this step..."
+                       data-module="{{ module }}" data-step="{{ step.key }}">
+                <button type="button" class="btn btn-teal add-task-btn"
+                        data-module="{{ module }}" data-step="{{ step.key }}">
+                  Add task
+                </button>
+              </div>
+            </div>
+
+            {# ── References / more info for this step ── #}
+            {% if step.references %}
+            <div class="step-references mt-3 pt-2 border-top">
+              <div class="small fw-semibold text-muted mb-1">
+                <i class="bi bi-link-45deg me-1"></i>More info &amp; references
+              </div>
+              <div class="d-flex flex-wrap gap-2">
+                {% for ref in step.references %}
+                <a href="{{ ref.url }}" target="_blank" rel="noopener"
+                   class="badge text-decoration-none reference-chip">
+                  <i class="bi bi-box-arrow-up-right me-1"></i>{{ ref.label }}
+                </a>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Important reminders -->
+  {% if checklist.reminders %}
+  <div class="card border-0 shadow-sm mt-3" style="border-left:4px solid var(--cb-lime) !important;">
+    <div class="card-body">
+      <h6 class="fw-bold text-navy mb-2">
+        <i class="bi bi-megaphone-fill me-2 text-lime"></i>Important Reminders
+      </h6>
+      <ul class="mb-0 small text-secondary">
+        {% for r in checklist.reminders %}
+        <li class="mb-1">{{ r }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- General references / where to get more info -->
+  {% if checklist.general_references %}
+  <div class="card border-0 shadow-sm mt-3" style="border-left:4px solid var(--cb-teal-dark) !important;">
+    <div class="card-body">
+      <h6 class="fw-bold text-navy mb-2">
+        <i class="bi bi-book-half me-2 text-teal"></i>Official Sources &amp; Further Reading
+      </h6>
+      <div class="d-flex flex-wrap gap-2">
+        {% for ref in checklist.general_references %}
+        <a href="{{ ref.url }}" target="_blank" rel="noopener"
+           class="badge text-decoration-none reference-chip">
+          <i class="bi bi-box-arrow-up-right me-1"></i>{{ ref.label }}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endmacro %}

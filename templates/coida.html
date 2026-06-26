@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+{% block title %}COIDA — Return of Earnings{% endblock %}
+{% block page_title %}COIDA — W.As.8 Return of Earnings &amp; LOGS{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- Left column: Forms -->
+  <div class="col-lg-4">
+
+    <!-- Earnings entry form -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-currency-dollar me-2 text-danger"></i>Add / Update Earnings by Class
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('coida_earning') }}">
+          <input type="hidden" name="record_id" value="">
+          <div class="row g-2 mb-2">
+            <div class="col-4">
+              <label class="form-label form-label-sm fw-semibold">Assessment Year</label>
+              <input type="text" name="assessment_year" class="form-control form-control-sm"
+                     placeholder="2025" value="{{ company_info.reporting_year if company_info else '' }}">
+            </div>
+            <div class="col-8">
+              <label class="form-label form-label-sm fw-semibold">Employer Reg. No.</label>
+              <input type="text" name="employer_reg_number" class="form-control form-control-sm"
+                     placeholder="CF registration number"
+                     value="{{ company_info.employer_reg_number if company_info else '' }}">
+            </div>
+          </div>
+          <div class="row g-2 mb-2">
+            <div class="col-4">
+              <label class="form-label form-label-sm fw-semibold">Class Code</label>
+              <input type="text" name="class_code" class="form-control form-control-sm"
+                     placeholder="A" maxlength="2" required>
+            </div>
+            <div class="col-4">
+              <label class="form-label form-label-sm fw-semibold">Subclass</label>
+              <input type="text" name="subclass" class="form-control form-control-sm"
+                     placeholder="A1" maxlength="5">
+            </div>
+            <div class="col-4">
+              <label class="form-label form-label-sm fw-semibold">No. Employees</label>
+              <input type="number" name="num_employees" class="form-control form-control-sm"
+                     min="0" value="0" id="coida-num-emp">
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Description</label>
+            <input type="text" name="description" class="form-control form-control-sm"
+                   placeholder="e.g. Clerical and Administrative">
+          </div>
+          <div class="mb-3">
+            <label class="form-label form-label-sm fw-semibold">Annual Earnings (R)</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text">R</span>
+              <input type="number" name="annual_earnings" class="form-control"
+                     step="0.01" min="0" value="0" id="coida-earnings">
+            </div>
+            <small class="text-muted">
+              Cap per employee: R {{ '{:,.2f}'.format(assessment.max_earnings_per_employee) }}
+            </small>
+          </div>
+
+          <!-- Live levy estimate -->
+          <div class="alert alert-info py-2 px-3 small mb-3" id="levy-preview">
+            <i class="bi bi-calculator me-1"></i>
+            Estimated levy preview will appear here as you type.
+          </div>
+
+          <button type="submit" class="btn btn-danger btn-sm w-100">
+            <i class="bi bi-plus-circle me-1"></i>Add Earnings Record
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- LOGS form -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-file-earmark-check me-2 text-success"></i>Add / Update LOGS Record
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('coida_logs') }}">
+          <input type="hidden" name="record_id" value="">
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Insurer</label>
+            <input type="text" name="insurer" class="form-control form-control-sm" required
+                   placeholder="e.g. Rand Mutual Assurance">
+          </div>
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Policy Number</label>
+            <input type="text" name="policy_number" class="form-control form-control-sm"
+                   placeholder="POL/2025/001234">
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label form-label-sm fw-semibold">Issue Date</label>
+              <input type="date" name="issue_date" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label form-label-sm fw-semibold">Expiry Date</label>
+              <input type="date" name="expiry_date" class="form-control form-control-sm">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-success btn-sm w-100">
+            <i class="bi bi-plus-circle me-1"></i>Add LOGS Record
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Generate W.As.8 -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-file-earmark-spreadsheet me-2 text-primary"></i>Generate W.As.8 Return
+      </div>
+      <div class="card-body d-grid gap-2">
+        <form method="POST" action="{{ url_for('coida_generate') }}">
+          <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold">Assessment Year</label>
+            <input type="text" name="assessment_year" class="form-control form-control-sm"
+                   placeholder="2025">
+          </div>
+          <button type="submit" class="btn btn-danger w-100">
+            <i class="bi bi-download me-1"></i>Download W.As.8 (.xlsx)
+          </button>
+        </form>
+        <small class="text-muted text-center">
+          Annual submission deadline: <strong>31 March</strong><br/>
+          Submit at <a href="https://www.cf.gov.za" target="_blank">www.cf.gov.za</a>
+        </small>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right column: Tables -->
+  <div class="col-lg-8">
+
+    <!-- Assessment summary -->
+    <div class="row g-3 mb-3">
+      <div class="col-4">
+        <div class="card border-0 shadow-sm text-center py-3">
+          <div class="fs-4 fw-bold text-danger">
+            R {{ '{:,.2f}'.format(assessment.total_earnings) }}
+          </div>
+          <small class="text-muted">Total Capped Earnings</small>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="card border-0 shadow-sm text-center py-3">
+          <div class="fs-4 fw-bold text-warning">
+            R {{ '{:,.2f}'.format(assessment.total_levy) }}
+          </div>
+          <small class="text-muted">Estimated Levy</small>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="card border-0 shadow-sm text-center py-3">
+          <div class="fs-4 fw-bold text-secondary">{{ earnings | length }}</div>
+          <small class="text-muted">COIDA Classes</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Earnings table -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom py-3 fw-semibold">
+        <i class="bi bi-table me-2 text-secondary"></i>Earnings by Class
+        <span class="badge bg-secondary ms-1">{{ earnings | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3">Class</th>
+                <th>Subclass</th>
+                <th>Description</th>
+                <th class="text-center">Employees</th>
+                <th class="text-end">Annual Earnings</th>
+                <th class="text-end">Rate</th>
+                <th class="text-end pe-3">Est. Levy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for detail in assessment.details %}
+              <tr>
+                <td class="ps-3">
+                  <span class="badge bg-danger-subtle text-danger border border-danger-subtle fw-bold">
+                    {{ detail.class_code }}
+                  </span>
+                </td>
+                <td>{{ detail.subclass or '—' }}</td>
+                <td>{{ detail.description or '—' }}</td>
+                <td class="text-center">{{ detail.num_employees }}</td>
+                <td class="text-end">R {{ '{:,.2f}'.format(detail.annual_earnings) }}</td>
+                <td class="text-end">
+                  <span class="badge bg-secondary-subtle text-secondary">
+                    {{ detail.rate }}%
+                  </span>
+                </td>
+                <td class="text-end pe-3 fw-semibold text-danger">
+                  R {{ '{:,.2f}'.format(detail.levy) }}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-5">
+                  <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                  No earnings records yet. Add a class using the form on the left.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            {% if assessment.details %}
+            <tfoot class="table-dark fw-bold">
+              <tr>
+                <td colspan="4" class="ps-3">TOTAL</td>
+                <td class="text-end">R {{ '{:,.2f}'.format(assessment.total_earnings) }}</td>
+                <td></td>
+                <td class="text-end pe-3">R {{ '{:,.2f}'.format(assessment.total_levy) }}</td>
+              </tr>
+            </tfoot>
+            {% endif %}
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOGS table -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom py-3 fw-semibold d-flex justify-content-between align-items-center">
+        <span>
+          <i class="bi bi-shield-check me-2 text-success"></i>
+          Letter of Good Standing (LOGS) Tracker
+          <span class="badge bg-secondary ms-1">{{ logs | length }}</span>
+        </span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3">Insurer</th>
+                <th>Policy Number</th>
+                <th>Issue Date</th>
+                <th>Expiry Date</th>
+                <th class="pe-3">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in logs %}
+              {% set log = item.log %}
+              {% set status = item.status %}
+              <tr>
+                <td class="ps-3 fw-semibold">{{ log.insurer or '—' }}</td>
+                <td><code>{{ log.policy_number or '—' }}</code></td>
+                <td>{{ log.issue_date or '—' }}</td>
+                <td>
+                  {{ log.expiry_date or '—' }}
+                  {% if status == 'Expiring Soon' %}
+                    <i class="bi bi-exclamation-triangle-fill text-warning ms-1"
+                       data-bs-toggle="tooltip" title="Expiring within 30 days"></i>
+                  {% endif %}
+                </td>
+                <td class="pe-3">
+                  {% if status == 'Valid' %}
+                    <span class="badge compliance-badge-green">
+                      <i class="bi bi-check-circle me-1"></i>Valid
+                    </span>
+                  {% elif status == 'Expiring Soon' %}
+                    <span class="badge compliance-badge-amber">
+                      <i class="bi bi-exclamation-circle me-1"></i>Expiring Soon
+                    </span>
+                  {% else %}
+                    <span class="badge compliance-badge-red">
+                      <i class="bi bi-x-circle me-1"></i>Expired
+                    </span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="text-center text-muted py-5">
+                  <i class="bi bi-shield-x fs-3 d-block mb-2"></i>
+                  No LOGS records. Add your insurer details using the form on the left.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card-footer bg-white border-top py-2">
+        <small class="text-muted">
+          <i class="bi bi-info-circle me-1"></i>
+          A valid LOGS is required to tender for government contracts.
+          Obtain / renew at <a href="https://www.cf.gov.za" target="_blank">www.cf.gov.za</a>.
+        </small>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Live levy preview calculator
+const RATES = {
+  'A':0.65,'B':0.71,'C':0.80,'D':1.20,'E':1.45,'F':1.90,'G':2.30,
+  'H':3.10,'I':4.50,'J':6.00,'K':8.50,'L':12.00,'M':18.00,'N':25.00,'O':35.00
+};
+const MAX_PER_EMP = {{ assessment.max_earnings_per_employee }};
+
+function updateLevyPreview() {
+  const earningsInput = document.getElementById('coida-earnings');
+  const numEmpInput = document.getElementById('coida-num-emp');
+  const classInput = document.querySelector('input[name="class_code"]');
+  const preview = document.getElementById('levy-preview');
+  if (!earningsInput || !preview) return;
+
+  const earnings = parseFloat(earningsInput.value) || 0;
+  const numEmp = parseInt(numEmpInput?.value) || 1;
+  const classCode = (classInput?.value || 'A').toUpperCase().charAt(0);
+  const rate = RATES[classCode] || 1.0;
+
+  const perEmp = numEmp > 0 ? earnings / numEmp : earnings;
+  const capped = Math.min(perEmp, MAX_PER_EMP) * numEmp;
+  const levy = (capped / 100) * rate;
+
+  preview.innerHTML = `<i class="bi bi-calculator me-1"></i>
+    Class <strong>${classCode}</strong> @ <strong>${rate}%</strong> per R100 —
+    Capped earnings: <strong>R ${capped.toLocaleString('en-ZA', {minimumFractionDigits:2})}</strong> —
+    Est. levy: <strong class="text-danger">R ${levy.toLocaleString('en-ZA', {minimumFractionDigits:2})}</strong>`;
+}
+
+document.getElementById('coida-earnings')?.addEventListener('input', updateLevyPreview);
+document.getElementById('coida-num-emp')?.addEventListener('input', updateLevyPreview);
+document.querySelector('input[name="class_code"]')?.addEventListener('input', updateLevyPreview);
+</script>
+{% endblock %}

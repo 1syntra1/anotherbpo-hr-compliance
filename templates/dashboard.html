@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <!-- Stats strip -->
+  <div class="col-12">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm stat-card">
+          <div class="card-body d-flex align-items-center gap-3">
+            <div class="stat-icon bg-primary-subtle rounded-3 p-3">
+              <i class="bi bi-people-fill text-primary fs-4"></i>
+            </div>
+            <div>
+              <div class="fs-3 fw-bold lh-1">{{ emp_count }}</div>
+              <small class="text-muted">Employees</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm stat-card">
+          <div class="card-body d-flex align-items-center gap-3">
+            <div class="stat-icon bg-warning-subtle rounded-3 p-3">
+              <i class="bi bi-mortarboard-fill text-warning fs-4"></i>
+            </div>
+            <div>
+              <div class="fs-3 fw-bold lh-1">{{ training_count }}</div>
+              <small class="text-muted">Training Records</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm stat-card">
+          <div class="card-body d-flex align-items-center gap-3">
+            <div class="stat-icon bg-success-subtle rounded-3 p-3">
+              <i class="bi bi-shield-fill-check text-success fs-4"></i>
+            </div>
+            <div>
+              <div class="fs-3 fw-bold lh-1">{{ logs_count }}</div>
+              <small class="text-muted">LOGS Policies</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm stat-card">
+          <div class="card-body d-flex align-items-center gap-3">
+            <div class="stat-icon bg-danger-subtle rounded-3 p-3">
+              <i class="bi bi-award-fill text-danger fs-4"></i>
+            </div>
+            <div>
+              <div class="fs-3 fw-bold lh-1">
+                {% if bbbee_row %}Level {{ bbbee_row.bbbee_level }}{% else %}—{% endif %}
+              </div>
+              <small class="text-muted">BBBEE Level</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Module cards 2×2 -->
+<div class="row g-4 mb-4">
+
+  <!-- Employment Equity -->
+  <div class="col-md-6">
+    <div class="card module-card mc-gbs border-0 shadow-sm h-100">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-start gap-3 mb-3">
+          <div class="module-icon mi-gbs rounded-3 p-3">
+            <i class="bi bi-bar-chart-steps fs-3"></i>
+          </div>
+          <div class="flex-grow-1">
+            <h5 class="card-title mb-1 fw-bold">Employment Equity</h5>
+            <p class="text-muted small mb-0">EEA2 &amp; EEA4 Submissions to the DoEL</p>
+          </div>
+          <span class="badge compliance-badge-amber">Due 15 Jan</span>
+        </div>
+        <p class="card-text text-secondary small">
+          Track your employment equity workforce profile across all occupational levels.
+          Generate EEA2 numerical goals reports and EEA4 income differential statements
+          for submission to the Department of Employment and Labour.
+        </p>
+        <div class="d-flex gap-2 mt-3">
+          <a href="{{ url_for('ee') }}" class="btn btn-teal btn-sm px-4">
+            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
+          </a>
+          <span class="badge bg-light text-dark border align-self-center">
+            <i class="bi bi-people me-1"></i>{{ emp_count }} employees
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GBS -->
+  <div class="col-md-6">
+    <div class="card module-card mc-bbbee border-0 shadow-sm h-100">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-start gap-3 mb-3">
+          <div class="module-icon mi-bbbee rounded-3 p-3">
+            <i class="bi bi-globe2 fs-3"></i>
+          </div>
+          <div class="flex-grow-1">
+            <h5 class="card-title mb-1 fw-bold">GBS Incentive Claim</h5>
+            <p class="text-muted small mb-0">Global Business Services — the dtic</p>
+          </div>
+          <span class="badge compliance-badge-teal">30-day window</span>
+        </div>
+        <p class="card-text text-secondary small">
+          Manage your Global Business Services incentive claim to the dtic. Follow the
+          10-step submission checklist — from data export and supporting documents to
+          auditor sign-off and final upload.
+        </p>
+        <div class="d-flex gap-2 mt-3">
+          <a href="{{ url_for('gbs') }}" class="btn btn-teal btn-sm px-4">
+            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
+          </a>
+          <span class="badge bg-light text-dark border align-self-center">
+            <i class="bi bi-list-check me-1"></i>10-step checklist
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WSP -->
+  <div class="col-md-6">
+    <div class="card module-card border-0 shadow-sm h-100">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-start gap-3 mb-3">
+          <div class="module-icon bg-warning rounded-3 p-3 text-white">
+            <i class="bi bi-mortarboard-fill fs-3"></i>
+          </div>
+          <div class="flex-grow-1">
+            <h5 class="card-title mb-1 fw-bold">WSP — Workplace Skills Plan</h5>
+            <p class="text-muted small mb-0">Skills Plan &amp; Annual Training Report (ATR)</p>
+          </div>
+          <span class="badge compliance-badge-green">Due 30 Jun</span>
+        </div>
+        <p class="card-text text-secondary small">
+          Capture planned and completed training interventions. Submit your Workplace
+          Skills Plan and Annual Training Report to your SETA by 30 June each year
+          to qualify for mandatory grants.
+        </p>
+        <div class="d-flex gap-2 mt-3">
+          <a href="{{ url_for('wsp') }}" class="btn btn-warning btn-sm px-4 text-white">
+            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
+          </a>
+          <span class="badge bg-light text-dark border align-self-center">
+            <i class="bi bi-journal-bookmark me-1"></i>{{ training_count }} records
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BBBEE -->
+  <div class="col-md-6">
+    <div class="card module-card border-0 shadow-sm h-100">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-start gap-3 mb-3">
+          <div class="module-icon bg-success rounded-3 p-3 text-white">
+            <i class="bi bi-award-fill fs-3"></i>
+          </div>
+          <div class="flex-grow-1">
+            <h5 class="card-title mb-1 fw-bold">BBBEE Scorecard</h5>
+            <p class="text-muted small mb-0">Generic, QSE &amp; EME Scorecards</p>
+          </div>
+          <span class="badge compliance-badge-amber">Varies</span>
+        </div>
+        <p class="card-text text-secondary small">
+          Calculate your Broad-Based Black Economic Empowerment score across all
+          five elements. Supports Generic (109-point), QSE (100-point), and
+          EME (automatic) scorecards with live level calculation.
+        </p>
+        <div class="d-flex gap-2 mt-3">
+          <a href="{{ url_for('bbbee') }}" class="btn btn-success btn-sm px-4">
+            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
+          </a>
+          {% if bbbee_row %}
+          <span class="badge bbbee-level-badge level-{{ bbbee_row.bbbee_level }} align-self-center">
+            Level {{ bbbee_row.bbbee_level }}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COIDA -->
+  <div class="col-md-6">
+    <div class="card module-card border-0 shadow-sm h-100">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-start gap-3 mb-3">
+          <div class="module-icon bg-danger rounded-3 p-3 text-white">
+            <i class="bi bi-shield-fill-check fs-3"></i>
+          </div>
+          <div class="flex-grow-1">
+            <h5 class="card-title mb-1 fw-bold">COIDA — Return of Earnings</h5>
+            <p class="text-muted small mb-0">W.As.8 &amp; Letter of Good Standing (LOGS)</p>
+          </div>
+          <span class="badge compliance-badge-red">Due 31 Mar</span>
+        </div>
+        <p class="card-text text-secondary small">
+          Manage your annual Return of Earnings (W.As.8) to the Compensation Fund.
+          Track employees by COIDA class, calculate levy estimates, and maintain
+          your Letter of Good Standing (LOGS) status.
+        </p>
+        <div class="d-flex gap-2 mt-3">
+          <a href="{{ url_for('coida') }}" class="btn btn-danger btn-sm px-4">
+            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
+          </a>
+          <span class="badge bg-light text-dark border align-self-center">
+            <i class="bi bi-file-earmark-text me-1"></i>{{ logs_count }} LOGS
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Submission Deadlines + Quick Info -->
+<div class="row g-4">
+  <div class="col-md-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-calendar-event me-2 text-primary"></i>Submission Deadlines — {{ current_year }}
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-4">Module</th>
+              <th>Submission</th>
+              <th>Deadline</th>
+              <th>Submitted To</th>
+              <th class="pe-4">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="ps-4">
+                <i class="bi bi-bar-chart-steps text-primary me-2"></i>
+                <strong>Employment Equity</strong>
+              </td>
+              <td>EEA2 &amp; EEA4</td>
+              <td><span class="badge bg-primary-subtle text-primary">15 January</span></td>
+              <td>DoEL</td>
+              <td class="pe-4"><span class="badge compliance-badge-amber">Pending</span></td>
+            </tr>
+            <tr>
+              <td class="ps-4">
+                <i class="bi bi-globe2 text-teal me-2"></i>
+                <strong>GBS Incentive Claim</strong>
+              </td>
+              <td>GBS Claim + Auditor Report</td>
+              <td><span class="badge compliance-badge-teal">30-day window</span></td>
+              <td>the dtic</td>
+              <td class="pe-4"><span class="badge compliance-badge-teal">Check</span></td>
+            </tr>
+            <tr>
+              <td class="ps-4">
+                <i class="bi bi-mortarboard-fill text-warning me-2"></i>
+                <strong>WSP / ATR</strong>
+              </td>
+              <td>WSP &amp; ATR</td>
+              <td><span class="badge bg-warning-subtle text-warning">30 June</span></td>
+              <td>SETA</td>
+              <td class="pe-4"><span class="badge compliance-badge-green">Open</span></td>
+            </tr>
+            <tr>
+              <td class="ps-4">
+                <i class="bi bi-shield-fill-check text-danger me-2"></i>
+                <strong>COIDA</strong>
+              </td>
+              <td>W.As.8 Return</td>
+              <td><span class="badge bg-danger-subtle text-danger">31 March</span></td>
+              <td>Compensation Fund</td>
+              <td class="pe-4"><span class="badge compliance-badge-red">Urgent</span></td>
+            </tr>
+            <tr>
+              <td class="ps-4">
+                <i class="bi bi-award-fill text-success me-2"></i>
+                <strong>BBBEE</strong>
+              </td>
+              <td>Verification</td>
+              <td><span class="badge bg-success-subtle text-success">Annual (varies)</span></td>
+              <td>SANAS Agency</td>
+              <td class="pe-4"><span class="badge compliance-badge-amber">Check</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-5">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-info-circle me-2 text-info"></i>Quick Reference
+      </div>
+      <div class="card-body">
+        <ul class="list-group list-group-flush">
+          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-link-45deg text-muted me-2"></i>EE Online Portal</span>
+            <a href="https://www.labour.gov.za" target="_blank" class="btn btn-outline-primary btn-sm">Visit</a>
+          </li>
+          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-link-45deg text-muted me-2"></i>Compensation Fund</span>
+            <a href="https://www.cf.gov.za" target="_blank" class="btn btn-outline-danger btn-sm">Visit</a>
+          </li>
+          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-link-45deg text-muted me-2"></i>BBBEE Commission</span>
+            <a href="https://www.bbbeecommission.co.za" target="_blank" class="btn btn-outline-success btn-sm">Visit</a>
+          </li>
+          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-download text-muted me-2"></i>Employee Template</span>
+            <a href="{{ url_for('employee_template') }}" class="btn btn-outline-secondary btn-sm">
+              <i class="bi bi-filetype-csv me-1"></i>CSV
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

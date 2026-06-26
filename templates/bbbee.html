@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}BBBEE Scorecard{% endblock %}
+{% block page_title %}BBBEE — Broad-Based Black Economic Empowerment{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- Left: Scorecard input -->
+  <div class="col-lg-5">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-award-fill me-2 text-success"></i>Scorecard Input
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('bbbee_save') }}" id="bbbee-form">
+
+          <!-- Scorecard type -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Scorecard Type</label>
+            <div class="d-flex gap-2">
+              {% for stype in ['Generic', 'QSE', 'EME'] %}
+              <div class="form-check flex-grow-1">
+                <input class="form-check-input" type="radio" name="scorecard_type"
+                       id="type-{{ stype }}" value="{{ stype }}"
+                       {% if bbbee_row and bbbee_row.scorecard_type == stype %}checked
+                       {% elif not bbbee_row and stype == 'Generic' %}checked{% endif %}>
+                <label class="form-check-label fw-semibold" for="type-{{ stype }}">
+                  {{ stype }}
+                  {% if stype == 'Generic' %}<small class="text-muted d-block" style="font-size:0.7rem">≥R50m turnover</small>
+                  {% elif stype == 'QSE' %}<small class="text-muted d-block" style="font-size:0.7rem">R10m–R50m</small>
+                  {% else %}<small class="text-muted d-block" style="font-size:0.7rem">&lt;R10m</small>{% endif %}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <!-- Company details -->
+          <div class="row g-2 mb-3">
+            <div class="col-8">
+              <label class="form-label form-label-sm fw-semibold">Company Name</label>
+              <input type="text" name="company_name" class="form-control form-control-sm"
+                     value="{{ bbbee_row.company_name if bbbee_row else '' }}">
+            </div>
+            <div class="col-4">
+              <label class="form-label form-label-sm fw-semibold">Assessment Year</label>
+              <input type="text" name="assessment_year" class="form-control form-control-sm"
+                     value="{{ bbbee_row.assessment_year if bbbee_row else '' }}" placeholder="2025">
+            </div>
+          </div>
+
+          <!-- Black ownership % (for EME) -->
+          <div class="mb-3">
+            <label class="form-label form-label-sm fw-semibold">
+              % Black Ownership
+              <span class="text-muted fw-normal">(relevant for EME auto-level)</span>
+            </label>
+            <div class="input-group input-group-sm">
+              <input type="number" name="black_owned_percent" id="black-pct"
+                     class="form-control" min="0" max="100" step="0.1"
+                     value="{{ bbbee_row.black_owned_percent if bbbee_row else 0 }}">
+              <span class="input-group-text">%</span>
+            </div>
+          </div>
+
+          <hr class="my-3"/>
+
+          <!-- Score elements -->
+          <!-- Generic / QSE panel (hidden for EME) -->
+          <div id="score-elements">
+
+            <div class="mb-3 score-element" data-element="ownership">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label form-label-sm fw-semibold mb-0">
+                  <i class="bi bi-person-check-fill text-success me-1"></i>Ownership
+                </label>
+                <div class="d-flex align-items-center gap-1">
+                  <input type="number" name="ownership_score" id="ownership-score"
+                         class="form-control form-control-sm score-input text-end"
+                         style="width:80px" min="0" step="0.01"
+                         value="{{ bbbee_row.ownership_score if bbbee_row else 0 }}">
+                  <span class="text-muted small" id="ownership-max">/ 25 pts</span>
+                </div>
+              </div>
+              <div class="progress" style="height:6px">
+                <div class="progress-bar bg-success score-bar" id="ownership-bar" style="width:0%"></div>
+              </div>
+            </div>
+
+            <div class="mb-3 score-element" data-element="management">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label form-label-sm fw-semibold mb-0">
+                  <i class="bi bi-briefcase-fill text-primary me-1"></i>Management Control
+                </label>
+                <div class="d-flex align-items-center gap-1">
+                  <input type="number" name="management_score" id="management-score"
+                         class="form-control form-control-sm score-input text-end"
+                         style="width:80px" min="0" step="0.01"
+                         value="{{ bbbee_row.management_score if bbbee_row else 0 }}">
+                  <span class="text-muted small" id="management-max">/ 19 pts</span>
+                </div>
+              </div>
+              <div class="progress" style="height:6px">
+                <div class="progress-bar bg-primary score-bar" id="management-bar" style="width:0%"></div>
+              </div>
+            </div>
+
+            <div class="mb-3 score-element" data-element="skills">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label form-label-sm fw-semibold mb-0">
+                  <i class="bi bi-mortarboard-fill text-warning me-1"></i>Skills Development
+                </label>
+                <div class="d-flex align-items-center gap-1">
+                  <input type="number" name="skills_score" id="skills-score"
+                         class="form-control form-control-sm score-input text-end"
+                         style="width:80px" min="0" step="0.01"
+                         value="{{ bbbee_row.skills_score if bbbee_row else 0 }}">
+                  <span class="text-muted small" id="skills-max">/ 20 pts</span>
+                </div>
+              </div>
+              <div class="progress" style="height:6px">
+                <div class="progress-bar bg-warning score-bar" id="skills-bar" style="width:0%"></div>
+              </div>
+            </div>
+
+            <div class="mb-3 score-element" data-element="esd">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label form-label-sm fw-semibold mb-0">
+                  <i class="bi bi-shop me-1 text-info"></i>Enterprise &amp; Supplier Dev.
+                </label>
+                <div class="d-flex align-items-center gap-1">
+                  <input type="number" name="esd_score" id="esd-score"
+                         class="form-control form-control-sm score-input text-end"
+                         style="width:80px" min="0" step="0.01"
+                         value="{{ bbbee_row.esd_score if bbbee_row else 0 }}">
+                  <span class="text-muted small" id="esd-max">/ 40 pts</span>
+                </div>
+              </div>
+              <div class="progress" style="height:6px">
+                <div class="progress-bar bg-info score-bar" id="esd-bar" style="width:0%"></div>
+              </div>
+            </div>
+
+            <!-- SED — hidden for QSE -->
+            <div class="mb-3 score-element" id="sed-element" data-element="sed">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label form-label-sm fw-semibold mb-0">
+                  <i class="bi bi-heart-fill text-danger me-1"></i>Socio-Economic Development
+                </label>
+                <div class="d-flex align-items-center gap-1">
+                  <input type="number" name="sed_score" id="sed-score"
+                         class="form-control form-control-sm score-input text-end"
+                         style="width:80px" min="0" step="0.01"
+                         value="{{ bbbee_row.sed_score if bbbee_row else 0 }}">
+                  <span class="text-muted small">/ 5 pts</span>
+                </div>
+              </div>
+              <div class="progress" style="height:6px">
+                <div class="progress-bar bg-danger score-bar" id="sed-bar" style="width:0%"></div>
+              </div>
+            </div>
+
+          </div><!-- /score-elements -->
+
+          <!-- EME notice -->
+          <div id="eme-notice" class="alert alert-success d-none">
+            <i class="bi bi-info-circle me-2"></i>
+            EME entities receive an <strong>automatic BBBEE Level</strong>.
+            Level 1 if &gt;51% black-owned, otherwise Level 4.
+            No scorecard scoring required.
+          </div>
+
+          <hr class="my-3"/>
+          <button type="submit" class="btn btn-success w-100">
+            <i class="bi bi-save me-1"></i>Save Scorecard
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Level display + generate -->
+  <div class="col-lg-7">
+
+    <!-- Live level badge -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body text-center py-4">
+        <p class="text-muted small mb-2">Current BBBEE Level</p>
+        <div id="level-badge" class="bbbee-level-display mx-auto level-{{ bbbee_row.bbbee_level if bbbee_row else 8 }}">
+          <span id="level-number">{{ bbbee_row.bbbee_level if bbbee_row else '—' }}</span>
+        </div>
+        <h5 class="mt-3 mb-1" id="level-label">
+          {% if bbbee_row %}Level {{ bbbee_row.bbbee_level }}{% else %}Enter scores to calculate{% endif %}
+        </h5>
+        <p class="text-muted small mb-0">
+          Procurement Recognition:
+          <strong id="recognition-pct">
+            {% if bbbee_row %}
+              {% set r = {1:'135%',2:'125%',3:'110%',4:'100%',5:'80%',6:'60%',7:'50%',8:'10%'} %}
+              {{ r[bbbee_row.bbbee_level] }}
+            {% else %}—{% endif %}
+          </strong>
+        </p>
+        <div class="mt-3">
+          <span class="badge bg-light text-dark border me-2">
+            Total: <strong id="total-display">{{ bbbee_row.total_score if bbbee_row else 0 }}</strong> pts
+          </span>
+          <span class="badge bg-light text-dark border">
+            Type: <strong>{{ bbbee_row.scorecard_type if bbbee_row else 'Generic' }}</strong>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Level guide -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-table me-2 text-secondary"></i>BBBEE Level Guide — Generic Scorecard (109 pts)
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0 align-middle small">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">Level</th>
+              <th>Score Required</th>
+              <th>Procurement Recognition</th>
+              <th class="pe-3">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set levels = [
+              (1, '≥ 100', '135%'),
+              (2, '≥ 95',  '125%'),
+              (3, '≥ 90',  '110%'),
+              (4, '≥ 80',  '100%'),
+              (5, '≥ 75',  '80%'),
+              (6, '≥ 65',  '60%'),
+              (7, '≥ 55',  '50%'),
+              (8, '< 55',  '10%'),
+            ] %}
+            {% for lvl, score, recog in levels %}
+            <tr class="{% if bbbee_row and bbbee_row.bbbee_level == lvl %}table-active fw-bold{% endif %}">
+              <td class="ps-3">
+                <span class="bbbee-level-dot level-{{ lvl }}"></span>
+                Level {{ lvl }}
+                {% if bbbee_row and bbbee_row.bbbee_level == lvl %}
+                  <i class="bi bi-arrow-left text-success ms-1"></i>
+                {% endif %}
+              </td>
+              <td>{{ score }} pts</td>
+              <td>{{ recog }}</td>
+              <td class="pe-3">
+                {% if lvl <= 4 %}
+                  <span class="badge compliance-badge-green">Preferred Supplier</span>
+                {% elif lvl <= 6 %}
+                  <span class="badge compliance-badge-amber">Acceptable</span>
+                {% else %}
+                  <span class="badge compliance-badge-red">Non-Preferred</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Generate reports -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-file-earmark-arrow-down me-2 text-primary"></i>Generate Reports
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-6">
+            <form method="POST" action="{{ url_for('bbbee_generate') }}">
+              <input type="hidden" name="report_type" value="excel">
+              <button type="submit" class="btn btn-success w-100">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i>Full Scorecard (.xlsx)
+              </button>
+            </form>
+          </div>
+          <div class="col-md-6">
+            <form method="POST" action="{{ url_for('bbbee_generate') }}">
+              <input type="hidden" name="report_type" value="pdf">
+              <button type="submit" class="btn btn-danger w-100">
+                <i class="bi bi-file-earmark-pdf me-1"></i>Certificate Summary (.pdf)
+              </button>
+            </form>
+          </div>
+        </div>
+        <small class="text-muted d-block mt-2 text-center">
+          Reports use the most recently saved scorecard entry.
+        </small>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// BBBEE live score calculator
+const GENERIC_MAX = { ownership: 25, management: 19, skills: 20, esd: 40, sed: 5 };
+const QSE_MAX     = { ownership: 25, management: 25, skills: 25, esd: 25, sed: 0 };
+
+const GENERIC_THRESHOLDS = [[100,1],[95,2],[90,3],[80,4],[75,5],[65,6],[55,7],[0,8]];
+const QSE_THRESHOLDS     = [[100,1],[90,2],[80,3],[70,4],[60,5],[50,6],[40,7],[0,8]];
+const RECOGNITION = {1:'135%',2:'125%',3:'110%',4:'100%',5:'80%',6:'60%',7:'50%',8:'10%'};
+const LEVEL_CLASSES = {1:'level-1',2:'level-2',3:'level-3',4:'level-4',5:'level-5',6:'level-6',7:'level-7',8:'level-8'};
+
+function getScorecard() {
+  return document.querySelector('input[name="scorecard_type"]:checked')?.value || 'Generic';
+}
+
+function calcLevel(stype, total, blackPct) {
+  if (stype === 'EME') {
+    return blackPct >= 51 ? 1 : 4;
+  }
+  const thresholds = stype === 'QSE' ? QSE_THRESHOLDS : GENERIC_THRESHOLDS;
+  for (const [min, lvl] of thresholds) {
+    if (total >= min) return lvl;
+  }
+  return 8;
+}
+
+function updateScorecard() {
+  const stype = getScorecard();
+  const maxes = stype === 'QSE' ? QSE_MAX : GENERIC_MAX;
+  const isEME = stype === 'EME';
+
+  document.getElementById('score-elements').style.display = isEME ? 'none' : '';
+  document.getElementById('eme-notice').classList.toggle('d-none', !isEME);
+
+  // Update SED visibility (not in QSE)
+  const sedEl = document.getElementById('sed-element');
+  if (sedEl) sedEl.style.display = (stype === 'QSE') ? 'none' : '';
+
+  // Update max labels
+  document.getElementById('management-max').textContent = `/ ${maxes.management} pts`;
+  document.getElementById('skills-max').textContent = `/ ${maxes.skills} pts`;
+  document.getElementById('esd-max').textContent = `/ ${maxes.esd} pts`;
+
+  // Calc total
+  const elements = ['ownership','management','skills','esd','sed'];
+  let total = 0;
+  elements.forEach(el => {
+    const inp = document.getElementById(`${el}-score`);
+    const bar = document.getElementById(`${el}-bar`);
+    const max = maxes[el] || 0;
+    const val = parseFloat(inp?.value || 0);
+    total += val;
+    if (bar && max > 0) bar.style.width = Math.min(val / max * 100, 100) + '%';
+  });
+
+  const blackPct = parseFloat(document.getElementById('black-pct')?.value || 0);
+  const level = calcLevel(stype, total, blackPct);
+
+  document.getElementById('total-display').textContent = total.toFixed(2);
+  document.getElementById('level-number').textContent = level;
+  document.getElementById('level-label').textContent = `Level ${level}`;
+  document.getElementById('recognition-pct').textContent = RECOGNITION[level] || '—';
+
+  const badge = document.getElementById('level-badge');
+  Object.values(LEVEL_CLASSES).forEach(c => badge.classList.remove(c));
+  badge.classList.add(LEVEL_CLASSES[level] || 'level-8');
+}
+
+// Bind events
+document.querySelectorAll('.score-input, #black-pct').forEach(inp =>
+  inp.addEventListener('input', updateScorecard));
+document.querySelectorAll('input[name="scorecard_type"]').forEach(r =>
+  r.addEventListener('change', updateScorecard));
+
+// Init
+updateScorecard();
+</script>
+{% endblock %}

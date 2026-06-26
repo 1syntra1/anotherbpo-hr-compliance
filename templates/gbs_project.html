@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% from "_checklist.html" import render_checklist %}
+{% block title %}{{ project.quarter }} {{ project.year }} — GBS Claim{% endblock %}
+{% block page_title %}GBS — {{ project.quarter }} {{ project.year }} Claim Project{% endblock %}
+
+{% block content %}
+
+<!-- Project header -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+      <div class="d-flex align-items-start gap-3">
+        <a href="{{ url_for('gbs') }}" class="btn btn-sm btn-outline-secondary" title="Back to all projects">
+          <i class="bi bi-arrow-left"></i>
+        </a>
+        <div>
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <h4 class="fw-bold text-navy mb-0">{{ project.quarter }} {{ project.year }}</h4>
+            {% if project.status == 'Submitted' %}
+              <span class="badge compliance-badge-green">
+                <i class="bi bi-check-circle-fill me-1"></i>Submitted
+              </span>
+            {% elif project.status == 'In Progress' %}
+              <span class="badge compliance-badge-teal">
+                <i class="bi bi-arrow-repeat me-1"></i>In Progress
+              </span>
+            {% else %}
+              <span class="badge bg-light text-secondary border">
+                <i class="bi bi-pencil-square me-1"></i>Draft
+              </span>
+            {% endif %}
+          </div>
+          <small class="text-muted">
+            {{ project.company_name or 'Unnamed entity' }}
+            &nbsp;·&nbsp; Created {{ (project.created_at or '')[:10] }}
+            {% if project.submitted_at %}
+            &nbsp;·&nbsp; Submitted {{ project.submitted_at[:10] }}
+            {% endif %}
+          </small>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="d-flex gap-2 flex-wrap">
+        {% if project.status == 'Submitted' %}
+          <form method="POST" action="{{ url_for('gbs_project_reopen', project_id=project.id) }}" class="d-inline">
+            <button type="submit" class="btn btn-outline-secondary btn-sm">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Reopen
+            </button>
+          </form>
+        {% else %}
+          <form method="POST" action="{{ url_for('gbs_project_submit', project_id=project.id) }}" class="d-inline"
+                onsubmit="return confirm('Submit and close this project? It will be marked Submitted and become read-only. You can reopen it later if needed.');">
+            <button type="submit" class="btn btn-lime btn-sm fw-semibold px-3">
+              <i class="bi bi-check-circle me-1"></i>Submit Project
+            </button>
+          </form>
+        {% endif %}
+        <form method="POST" action="{{ url_for('gbs_project_delete', project_id=project.id) }}" class="d-inline"
+              onsubmit="return confirm('Permanently delete this project, its checklist progress, and custom tasks? This cannot be undone.');">
+          <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete project">
+            <i class="bi bi-trash"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    {% if readonly %}
+    <div class="alert alert-success d-flex align-items-center gap-2 mt-3 mb-0 py-2">
+      <i class="bi bi-check-circle-fill"></i>
+      <small class="fw-semibold">This project has been submitted and is read-only. Click <em>Reopen</em> to make changes.</small>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-pills mb-4 gap-2" id="gbsTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-checklist-btn" data-bs-toggle="pill"
+            data-bs-target="#tab-checklist" type="button" role="tab">
+      <i class="bi bi-list-check me-1"></i>Submission Checklist
+      <span class="badge bg-white text-dark ms-1">{{ cl_done }}/{{ cl_total }}</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-claim-btn" data-bs-toggle="pill"
+            data-bs-target="#tab-claim" type="button" role="tab">
+      <i class="bi bi-clipboard-data me-1"></i>Claim Details
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content {% if readonly %}readonly-section{% endif %}">
+
+  <!-- ═══ TAB 1: Submission Checklist ═══ -->
+  <div class="tab-pane fade show active" id="tab-checklist" role="tabpanel">
+    {{ render_checklist(scope, checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks, hidden_tasks) }}
+  </div>
+
+  <!-- ═══ TAB 2: Claim Details ═══ -->
+  <div class="tab-pane fade" id="tab-claim" role="tabpanel">
+    <div class="row g-4">
+      <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+          <div class="card-header bg-white border-bottom fw-semibold py-3">
+            <i class="bi bi-clipboard-data me-2 text-teal"></i>GBS Claim Particulars
+          </div>
+          <div class="card-body">
+            <form method="POST" action="{{ url_for('gbs_project', project_id=project.id) }}">
+              <fieldset {% if readonly %}disabled{% endif %}>
+              <div class="row g-3">
+                <div class="col-md-12">
+                  <label class="form-label fw-semibold small">Company / Entity Name</label>
+                  <input type="text" name="company_name" class="form-control form-control-sm"
+                         value="{{ project.company_name or '' }}">
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">dtic Notification Date</label>
+                  <input type="date" name="dtic_notification_date" class="form-control form-control-sm"
+                         value="{{ project.dtic_notification_date or '' }}">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Submission Deadline</label>
+                  <input type="date" name="submission_deadline" class="form-control form-control-sm"
+                         value="{{ project.submission_deadline or '' }}">
+                  <small class="text-muted">Usually 30 days after notification</small>
+                </div>
+
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold small">No. of Campaigns</label>
+                  <input type="number" name="num_campaigns" class="form-control form-control-sm" min="0"
+                         value="{{ project.num_campaigns or '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold small">Qualifying Employees</label>
+                  <input type="number" name="num_qualifying_employees" class="form-control form-control-sm" min="0"
+                         value="{{ project.num_qualifying_employees or '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold small">Export Revenue (R)</label>
+                  <input type="number" step="0.01" name="export_revenue" class="form-control form-control-sm" min="0"
+                         value="{{ project.export_revenue or '' }}">
+                  <small class="text-muted">Must match Site Visit Report</small>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Operational Premises</label>
+                  <input type="text" name="premises" class="form-control form-control-sm"
+                         value="{{ project.premises or '' }}" placeholder="e.g. JHB &amp; CPT">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold small">Appointed External Auditor</label>
+                  <input type="text" name="auditor" class="form-control form-control-sm"
+                         value="{{ project.auditor or '' }}">
+                </div>
+
+                <div class="col-12">
+                  <label class="form-label fw-semibold small">Notes</label>
+                  <textarea name="notes" class="form-control form-control-sm" rows="2"
+                            placeholder="Any additional claim notes...">{{ project.notes or '' }}</textarea>
+                </div>
+              </div>
+              {% if not readonly %}
+              <button type="submit" class="btn btn-teal btn-sm mt-3 px-4">
+                <i class="bi bi-save me-1"></i>Save Claim Details
+              </button>
+              {% endif %}
+              </fieldset>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary side panel -->
+      <div class="col-lg-4">
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-body">
+            <h6 class="fw-bold text-navy mb-3"><i class="bi bi-info-circle me-2 text-teal"></i>About the GBS Incentive</h6>
+            <p class="text-secondary small mb-2">
+              The Global Business Services (GBS) incentive is administered by the
+              <strong>Department of Trade, Industry and Competition (the dtic)</strong>
+              to support offshore service delivery and job creation.
+            </p>
+            <ul class="small text-secondary mb-0 ps-3">
+              <li class="mb-1">Employees must work <strong>40+ hours/week</strong> (excl. lunch).</li>
+              <li class="mb-1">No job displacement of local roles.</li>
+              <li class="mb-1">Offshore activity must be proven via contracts &amp; invoices.</li>
+              <li>Claims require external auditor sign-off.</li>
+            </ul>
+          </div>
+        </div>
+
+        {% if project.export_revenue and project.export_revenue > 0 %}
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-4">
+            <small class="text-muted text-uppercase" style="letter-spacing:.05em;">Export Revenue Claimed</small>
+            <div class="fs-3 fw-bold text-teal mt-1">
+              R {{ "{:,.2f}".format(project.export_revenue) }}
+            </div>
+            <span class="badge compliance-badge-teal mt-2">{{ project.quarter }} {{ project.year }}</span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div><!-- /tab-content -->
+{% endblock %}
