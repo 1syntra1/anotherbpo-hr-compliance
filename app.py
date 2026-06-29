@@ -16,6 +16,30 @@ app.secret_key = os.environ.get("HR_AUDIT_SECRET", "anotherbpo-hr-compliance-dev
 
 PURGE_HOLD_DAYS = 30  # admin-approved deletions are held this many days before purge
 
+# ── Session behaviour ────────────────────────────────────────
+INACTIVITY_TIMEOUT = 60  # seconds — auto-logout when "stay logged in" is NOT chosen
+app.permanent_session_lifetime = timedelta(days=30)  # "stay logged in" duration
+
+
+@app.before_request
+def enforce_inactivity_timeout():
+    """Sign out non-'remember' sessions after INACTIVITY_TIMEOUT of no requests.
+    (A client-side idle timer logs the user out even without a request; this is the
+    server-side backstop.) Sessions with 'stay logged in' are exempt."""
+    if not session.get("logged_in"):
+        return
+    if session.get("remember"):
+        return
+    if request.endpoint in ("logout", "static"):
+        return
+    now = datetime.now().timestamp()
+    last = session.get("last_activity")
+    if last is not None and (now - last) > INACTIVITY_TIMEOUT:
+        session.clear()
+        flash("You were signed out after 1 minute of inactivity.", "info")
+        return redirect(url_for("login"))
+    session["last_activity"] = now
+
 
 def login_required(f):
     @wraps(f)
@@ -232,9 +256,20 @@ def init_db():
             username TEXT,
             role TEXT,
             action TEXT,
-            category TEXT,                             -- auth / project / task / trash / user
+            category TEXT,                             -- auth / project / task / trash / user / deadline
             detail TEXT,
             target TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS deadlines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dkey TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            authority TEXT,
+            due_date TEXT,                             -- ISO date, or NULL for "varies"
+            note TEXT,
+            sort_order INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT (datetime('now'))
         );
     """)
 
@@ -262,6 +297,23 @@ def init_db():
         db.execute(
             "INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
             ("user", generate_password_hash("anotherbpo2024"), "user", "Standard User"),
+        )
+
+    # ── Seed submission deadlines if none exist ──
+    dcount = db.execute("SELECT COUNT(*) AS c FROM deadlines").fetchone()["c"]
+    if dcount == 0:
+        seed_deadlines = [
+            # dkey, title, authority, due_date, note, sort_order
+            ("wsp", "WSP & ATR", "SETA", "2026-06-30", "Workplace Skills Plan & Annual Training Report", 1),
+            ("cipc_bo", "CIPC Beneficial Ownership", "CIPC", "2026-07-30", "Annual beneficial ownership filing", 2),
+            ("ee", "Employment Equity (EEA2 & EEA4)", "DoEL", "2027-01-15", "Online submission deadline", 3),
+            ("coida", "COIDA Return of Earnings (W.As.8)", "Compensation Fund", "2027-03-31", "Annual Return of Earnings", 4),
+            ("gbs", "GBS Incentive Claim", "the dtic", None, "Within 30 days of dtic notification", 5),
+            ("bbbee", "BBBEE Verification", "SANAS-accredited agency", None, "Annual (date varies)", 6),
+        ]
+        db.executemany(
+            "INSERT INTO deadlines (dkey, title, authority, due_date, note, sort_order) VALUES (?,?,?,?,?,?)",
+            seed_deadlines,
         )
 
     db.commit()
@@ -447,15 +499,20 @@ def login():
             "SELECT * FROM users WHERE username=? AND active=1", (username,)
         ).fetchone()
         if user and check_password_hash(user["password_hash"], password):
+            remember = bool(request.form.get("remember"))
             session["logged_in"] = True
             session["username"] = user["username"]
             session["role"] = user["role"]
             session["full_name"] = user["full_name"] or user["username"]
+            session["remember"] = remember
+            session.permanent = remember  # remember = 30-day cookie; else session cookie
+            session["last_activity"] = datetime.now().timestamp()
             db.execute(
                 "UPDATE users SET last_login=datetime('now') WHERE id=?", (user["id"],)
             )
             db.commit()
-            log_action("login", "auth", "Signed in (%s)" % user["role"])
+            log_action("login", "auth",
+                       "Signed in (%s%s)" % (user["role"], ", stay logged in" if remember else ""))
             flash(f"Welcome back, {session['full_name']}!", "success")
             return redirect(url_for("dashboard"))
         log_action("login_failed", "auth",
@@ -466,11 +523,62 @@ def login():
 
 @app.route("/logout")
 def logout():
+    timed_out = request.args.get("timeout")
     if session.get("logged_in"):
-        log_action("logout", "auth", "Signed out")
+        log_action("logout", "auth",
+                   "Auto sign-out (1 min inactivity)" if timed_out else "Signed out")
     session.clear()
+    if timed_out:
+        flash("You were signed out after 1 minute of inactivity.", "info")
+        return redirect(url_for("login"))
     flash("You have been logged out.", "info")
     return redirect(url_for("landing"))
+
+
+# ─── Deadlines ───────────────────────────────────────────────────────────────
+
+def _deadline_view(row):
+    """Augment a deadline row with display string, days remaining, and a status class."""
+    d = dict(row)
+    due = d.get("due_date")
+    if due:
+        try:
+            dd = date.fromisoformat(due)
+            days = (dd - date.today()).days
+            d["due_display"] = dd.strftime("%d %b %Y")
+            d["days"] = days
+            if days < 0:
+                d["status_label"] = "Overdue by %d day%s" % (abs(days), "" if abs(days) == 1 else "s")
+                d["status_class"] = "red"
+            elif days == 0:
+                d["status_label"] = "Due today"
+                d["status_class"] = "red"
+            elif days <= 14:
+                d["status_label"] = "In %d day%s" % (days, "" if days == 1 else "s")
+                d["status_class"] = "red"
+            elif days <= 45:
+                d["status_label"] = "In %d days" % days
+                d["status_class"] = "amber"
+            else:
+                d["status_label"] = "In %d days" % days
+                d["status_class"] = "teal"
+            return d
+        except ValueError:
+            pass
+    # No (valid) date → "varies"
+    d["due_display"] = d.get("note") or "Varies"
+    d["days"] = None
+    d["status_label"] = "Varies"
+    d["status_class"] = "grey"
+    return d
+
+
+def get_deadlines(db):
+    rows = db.execute("SELECT * FROM deadlines").fetchall()
+    items = [_deadline_view(r) for r in rows]
+    # Soonest dated first; undated ("varies") last; tie-break on sort_order
+    items.sort(key=lambda x: (x["days"] is None, x["days"] if x["days"] is not None else 0, x["sort_order"]))
+    return items
 
 
 # ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -485,14 +593,45 @@ def dashboard():
     bbbee_row = db.execute(
         "SELECT * FROM bbbee_data ORDER BY id DESC LIMIT 1"
     ).fetchone()
+    deadlines = get_deadlines(db)
     return render_template(
         "dashboard.html",
         emp_count=emp_count,
         training_count=training_count,
         logs_count=logs_count,
         bbbee_row=bbbee_row,
+        deadlines=deadlines,
         current_year=datetime.now().year,
     )
+
+
+@app.route("/deadlines/<int:deadline_id>/update", methods=["POST"])
+@login_required
+def deadline_update(deadline_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM deadlines WHERE id=?", (deadline_id,)).fetchone()
+    if not row:
+        flash("Deadline not found.", "danger")
+        return redirect(url_for("dashboard"))
+    due_date = (request.form.get("due_date") or "").strip() or None
+    note = (request.form.get("note") or "").strip()
+    # Validate date if supplied
+    if due_date:
+        try:
+            date.fromisoformat(due_date)
+        except ValueError:
+            flash("Invalid date. Please use the date picker.", "danger")
+            return redirect(url_for("dashboard"))
+    db.execute(
+        "UPDATE deadlines SET due_date=?, note=?, updated_at=datetime('now') WHERE id=?",
+        (due_date, note, deadline_id),
+    )
+    db.commit()
+    log_action("deadline_update", "deadline",
+               "Set %s due date to %s" % (row["title"], due_date or "(varies)"),
+               target=row["dkey"])
+    flash("Deadline updated.", "success")
+    return redirect(url_for("dashboard"))
 
 
 # ─── Employees ───────────────────────────────────────────────────────────────
@@ -1591,6 +1730,7 @@ AUDIT_CATEGORIES = [
     ("task", "Tasks"),
     ("trash", "Trash bin"),
     ("user", "User management"),
+    ("deadline", "Deadlines"),
 ]
 
 
@@ -1764,6 +1904,8 @@ def inject_now():
         "current_full_name": session.get("full_name", session.get("username", "")),
         "current_role": session.get("role", ""),
         "is_admin": session.get("role") == "admin",
+        "session_remember": session.get("remember", False),
+        "inactivity_timeout": INACTIVITY_TIMEOUT,
     }
 
 

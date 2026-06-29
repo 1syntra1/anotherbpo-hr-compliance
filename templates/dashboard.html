@@ -3,6 +3,56 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
+
+<!-- ═══ Submission Deadlines (top of dashboard) ═══ -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white border-bottom d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
+    <span class="fw-semibold">
+      <i class="bi bi-calendar-event me-2 text-teal"></i>Submission Deadlines
+    </span>
+    <small class="text-muted"><i class="bi bi-pencil me-1"></i>Click the pencil to change a due date</small>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-4">Submission</th>
+            <th>Submitted To</th>
+            <th>Due Date</th>
+            <th>Status</th>
+            <th class="pe-4 text-end">Edit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in deadlines %}
+          <tr>
+            <td class="ps-4">
+              <strong>{{ d.title }}</strong>
+              {% if d.note and d.due_date %}<br><small class="text-muted">{{ d.note }}</small>{% endif %}
+            </td>
+            <td class="text-muted">{{ d.authority }}</td>
+            <td class="fw-semibold text-navy">{{ d.due_display }}</td>
+            <td>
+              {% if d.status_class == 'red' %}<span class="badge compliance-badge-red">{{ d.status_label }}</span>
+              {% elif d.status_class == 'amber' %}<span class="badge compliance-badge-amber">{{ d.status_label }}</span>
+              {% elif d.status_class == 'teal' %}<span class="badge compliance-badge-teal">{{ d.status_label }}</span>
+              {% else %}<span class="badge bg-light text-secondary border">{{ d.status_label }}</span>{% endif %}
+            </td>
+            <td class="pe-4 text-end">
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      data-bs-toggle="modal" data-bs-target="#dl{{ d.id }}" title="Change due date">
+                <i class="bi bi-pencil"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
   <!-- Stats strip -->
   <div class="col-12">
@@ -227,82 +277,9 @@
 
 </div>
 
-<!-- Submission Deadlines + Quick Info -->
+<!-- Quick Reference -->
 <div class="row g-4">
-  <div class="col-md-7">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-bottom fw-semibold py-3">
-        <i class="bi bi-calendar-event me-2 text-primary"></i>Submission Deadlines — {{ current_year }}
-      </div>
-      <div class="card-body p-0">
-        <table class="table table-hover mb-0 align-middle">
-          <thead class="table-light">
-            <tr>
-              <th class="ps-4">Module</th>
-              <th>Submission</th>
-              <th>Deadline</th>
-              <th>Submitted To</th>
-              <th class="pe-4">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="ps-4">
-                <i class="bi bi-bar-chart-steps text-primary me-2"></i>
-                <strong>Employment Equity</strong>
-              </td>
-              <td>EEA2 &amp; EEA4</td>
-              <td><span class="badge bg-primary-subtle text-primary">15 January</span></td>
-              <td>DoEL</td>
-              <td class="pe-4"><span class="badge compliance-badge-amber">Pending</span></td>
-            </tr>
-            <tr>
-              <td class="ps-4">
-                <i class="bi bi-globe2 text-teal me-2"></i>
-                <strong>GBS Incentive Claim</strong>
-              </td>
-              <td>GBS Claim + Auditor Report</td>
-              <td><span class="badge compliance-badge-teal">30-day window</span></td>
-              <td>the dtic</td>
-              <td class="pe-4"><span class="badge compliance-badge-teal">Check</span></td>
-            </tr>
-            <tr>
-              <td class="ps-4">
-                <i class="bi bi-mortarboard-fill text-warning me-2"></i>
-                <strong>WSP / ATR</strong>
-              </td>
-              <td>WSP &amp; ATR</td>
-              <td><span class="badge bg-warning-subtle text-warning">30 June</span></td>
-              <td>SETA</td>
-              <td class="pe-4"><span class="badge compliance-badge-green">Open</span></td>
-            </tr>
-            <tr>
-              <td class="ps-4">
-                <i class="bi bi-shield-fill-check text-danger me-2"></i>
-                <strong>COIDA</strong>
-              </td>
-              <td>W.As.8 Return</td>
-              <td><span class="badge bg-danger-subtle text-danger">31 March</span></td>
-              <td>Compensation Fund</td>
-              <td class="pe-4"><span class="badge compliance-badge-red">Urgent</span></td>
-            </tr>
-            <tr>
-              <td class="ps-4">
-                <i class="bi bi-award-fill text-success me-2"></i>
-                <strong>BBBEE</strong>
-              </td>
-              <td>Verification</td>
-              <td><span class="badge bg-success-subtle text-success">Annual (varies)</span></td>
-              <td>SANAS Agency</td>
-              <td class="pe-4"><span class="badge compliance-badge-amber">Check</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-md-5">
+  <div class="col-md-6">
     <div class="card border-0 shadow-sm h-100">
       <div class="card-header bg-white border-bottom fw-semibold py-3">
         <i class="bi bi-info-circle me-2 text-info"></i>Quick Reference
@@ -311,15 +288,15 @@
         <ul class="list-group list-group-flush">
           <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
             <span><i class="bi bi-link-45deg text-muted me-2"></i>EE Online Portal</span>
-            <a href="https://www.labour.gov.za" target="_blank" class="btn btn-outline-primary btn-sm">Visit</a>
+            <a href="https://ee.labour.gov.za" target="_blank" class="btn btn-outline-primary btn-sm">Visit</a>
           </li>
           <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
             <span><i class="bi bi-link-45deg text-muted me-2"></i>Compensation Fund</span>
-            <a href="https://www.cf.gov.za" target="_blank" class="btn btn-outline-danger btn-sm">Visit</a>
+            <a href="https://www.labour.gov.za" target="_blank" class="btn btn-outline-danger btn-sm">Visit</a>
           </li>
           <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-link-45deg text-muted me-2"></i>BBBEE Commission</span>
-            <a href="https://www.bbbeecommission.co.za" target="_blank" class="btn btn-outline-success btn-sm">Visit</a>
+            <span><i class="bi bi-link-45deg text-muted me-2"></i>CIPC (Beneficial Ownership)</span>
+            <a href="https://www.cipc.co.za" target="_blank" class="btn btn-outline-warning btn-sm">Visit</a>
           </li>
           <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
             <span><i class="bi bi-download text-muted me-2"></i>Employee Template</span>
@@ -332,4 +309,31 @@
     </div>
   </div>
 </div>
+
+<!-- Deadline edit modals -->
+{% for d in deadlines %}
+<div class="modal fade" id="dl{{ d.id }}" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="POST" action="{{ url_for('deadline_update', deadline_id=d.id) }}" class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:var(--cb-navy);color:#fff;">
+        <h6 class="modal-title"><i class="bi bi-calendar-event me-2"></i>{{ d.title }}</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-start">
+        <label class="form-label fw-semibold small">Due date</label>
+        <input type="date" name="due_date" class="form-control" value="{{ d.due_date or '' }}">
+        <small class="text-muted">Leave blank if the date varies / is event-driven.</small>
+        <label class="form-label fw-semibold small mt-3">Note (optional)</label>
+        <input type="text" name="note" class="form-control" value="{{ d.note or '' }}"
+               placeholder="e.g. Within 30 days of notification">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-teal btn-sm">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
 {% endblock %}

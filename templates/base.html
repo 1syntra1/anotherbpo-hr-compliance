@@ -181,6 +181,22 @@
     document.getElementById('sidebar').classList.toggle('sidebar-open');
   });
 </script>
+
+{% if current_user and not session_remember %}
+<script>
+  // Auto-logout after inactivity when "Stay logged in" was NOT chosen.
+  (function () {
+    var IDLE_MS = {{ inactivity_timeout }} * 1000;
+    var timer;
+    function logout() { window.location = "{{ url_for('logout') }}?timeout=1"; }
+    function reset() { clearTimeout(timer); timer = setTimeout(logout, IDLE_MS); }
+    ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"].forEach(function (evt) {
+      document.addEventListener(evt, reset, { passive: true });
+    });
+    reset();
+  })();
+</script>
+{% endif %}
 {% block extra_js %}{% endblock %}
 </body>
 </html>

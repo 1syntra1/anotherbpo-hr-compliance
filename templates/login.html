@@ -81,7 +81,7 @@
             </div>
           </div>
 
-          <div class="mb-4">
+          <div class="mb-3">
             <label for="password" class="form-label">Password</label>
             <div class="input-group">
               <span class="input-group-text bg-light border-end-0" style="color:var(--cb-teal-dark);">
@@ -94,6 +94,18 @@
               </button>
             </div>
           </div>
+
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="remember" name="remember" value="1">
+            <label class="form-check-label small" for="remember">
+              Stay logged in
+            </label>
+          </div>
+          <p class="text-muted mb-4" style="font-size:.74rem;">
+            <i class="bi bi-shield-lock me-1"></i>
+            If unticked, you'll be signed out after <strong>1 minute</strong> of inactivity or when
+            you close the browser.
+          </p>
 
           <button type="submit" class="btn btn-teal w-100 py-2 fw-semibold rounded-pill">
             <i class="bi bi-box-arrow-in-right me-2"></i>Sign In
