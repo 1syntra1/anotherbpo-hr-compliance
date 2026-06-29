@@ -17,7 +17,13 @@ app.secret_key = os.environ.get("HR_AUDIT_SECRET", "anotherbpo-hr-compliance-dev
 PURGE_HOLD_DAYS = 30  # admin-approved deletions are held this many days before purge
 
 # ── Session behaviour ────────────────────────────────────────
-INACTIVITY_TIMEOUT = 60  # seconds — auto-logout when "stay logged in" is NOT chosen
+# When "stay logged in" is NOT chosen: after IDLE_WARNING_AFTER seconds of inactivity a
+# warning popup appears and counts down LOGOUT_COUNTDOWN seconds before signing out
+# (total ≈ 1 minute). INACTIVITY_TIMEOUT is the server-side backstop and must comfortably
+# exceed IDLE_WARNING_AFTER + LOGOUT_COUNTDOWN so a "Stay signed in" click always succeeds.
+IDLE_WARNING_AFTER = 30   # seconds idle before the warning popup
+LOGOUT_COUNTDOWN = 30     # seconds counted down inside the popup
+INACTIVITY_TIMEOUT = 75   # server-side backstop (seconds)
 app.permanent_session_lifetime = timedelta(days=30)  # "stay logged in" duration
 
 
@@ -519,6 +525,14 @@ def login():
                    "Failed sign-in attempt", target=username, username=username or "unknown")
         flash("Invalid username or password.", "danger")
     return render_template("login.html")
+
+
+@app.route("/session/ping", methods=["POST"])
+@login_required
+def session_ping():
+    """Lightweight keep-alive. before_request refreshes last_activity, so a
+    'Stay signed in' click resets the inactivity clock."""
+    return jsonify({"ok": True})
 
 
 @app.route("/logout")
@@ -1905,7 +1919,8 @@ def inject_now():
         "current_role": session.get("role", ""),
         "is_admin": session.get("role") == "admin",
         "session_remember": session.get("remember", False),
-        "inactivity_timeout": INACTIVITY_TIMEOUT,
+        "idle_warning_after": IDLE_WARNING_AFTER,
+        "logout_countdown": LOGOUT_COUNTDOWN,
     }
 
 

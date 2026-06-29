@@ -183,17 +183,70 @@
 </script>
 
 {% if current_user and not session_remember %}
+<!-- Inactivity warning + countdown -->
+<div class="modal fade" id="idleModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:var(--cb-navy);color:#fff;">
+        <h6 class="modal-title mb-0"><i class="bi bi-clock-history me-2"></i>Are you still there?</h6>
+      </div>
+      <div class="modal-body text-center py-4">
+        <div class="display-4 fw-bold text-navy mb-2"><span id="idleCountdown">30</span>s</div>
+        <p class="text-muted mb-0">
+          You've been inactive. For your security you'll be signed out automatically.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary btn-sm">Sign out now</a>
+        <button type="button" id="idleStay" class="btn btn-teal btn-sm px-4">
+          <i class="bi bi-check-lg me-1"></i>Stay signed in
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 <script>
-  // Auto-logout after inactivity when "Stay logged in" was NOT chosen.
+  // Inactivity warning popup with a countdown (only when "Stay logged in" was NOT chosen).
   (function () {
-    var IDLE_MS = {{ inactivity_timeout }} * 1000;
-    var timer;
-    function logout() { window.location = "{{ url_for('logout') }}?timeout=1"; }
-    function reset() { clearTimeout(timer); timer = setTimeout(logout, IDLE_MS); }
-    ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"].forEach(function (evt) {
-      document.addEventListener(evt, reset, { passive: true });
+    var IDLE_MS   = {{ idle_warning_after }} * 1000;   // idle time before the popup shows
+    var COUNTDOWN = {{ logout_countdown }};            // seconds counted down in the popup
+    var modalEl = document.getElementById('idleModal');
+    var modal = new bootstrap.Modal(modalEl);
+    var cdEl = document.getElementById('idleCountdown');
+    var idleTimer, countdownTimer, warning = false;
+
+    function doLogout() { window.location = "{{ url_for('logout') }}?timeout=1"; }
+
+    function startWarning() {
+      warning = true;
+      var remaining = COUNTDOWN;
+      cdEl.textContent = remaining;
+      modal.show();
+      countdownTimer = setInterval(function () {
+        remaining -= 1;
+        cdEl.textContent = remaining;
+        if (remaining <= 0) { clearInterval(countdownTimer); doLogout(); }
+      }, 1000);
+    }
+
+    function resetIdle() {
+      if (warning) return;                 // ignore passive activity while the popup is up
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(startWarning, IDLE_MS);
+    }
+
+    document.getElementById('idleStay').addEventListener('click', function () {
+      clearInterval(countdownTimer);
+      warning = false;
+      modal.hide();
+      fetch("{{ url_for('session_ping') }}", { method: 'POST' }).catch(function () {});
+      resetIdle();
     });
-    reset();
+
+    ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"].forEach(function (evt) {
+      document.addEventListener(evt, resetIdle, { passive: true });
+    });
+    resetIdle();
   })();
 </script>
 {% endif %}
