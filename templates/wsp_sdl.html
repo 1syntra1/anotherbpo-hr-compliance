@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}SDL / EMP201 Tracker{% endblock %}
+{% block page_title %}Monthly SDL &amp; EMP201 Tracker{% endblock %}
+
+{% block content %}
+{% include "_wsp_nav.html" %}
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <form method="GET" action="{{ url_for('wsp_sdl') }}" class="d-flex align-items-center gap-2">
+    <label for="year" class="form-label small fw-semibold mb-0">Year</label>
+    <select id="year" name="year" class="form-select form-select-sm" style="width:auto"
+            onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+    <noscript><button class="btn btn-sm btn-outline-secondary">Go</button></noscript>
+  </form>
+  <span class="text-muted small ms-auto">Captures EMP201 submission, SDL payable vs paid, and the date received — for monthly &amp; quarterly reconciliation.</span>
+</div>
+
+<form method="POST" action="{{ url_for('wsp_sdl') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="year" value="{{ year }}">
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0" style="font-size:.85rem;">
+        <caption class="visually-hidden">Monthly SDL and EMP201 tracker for {{ year }}</caption>
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3" scope="col">Month</th>
+            <th scope="col" class="text-center">EMP201 received</th>
+            <th scope="col" class="text-end">SDL payable (R)</th>
+            <th scope="col" class="text-end">SDL paid (R)</th>
+            <th scope="col" class="text-end">Variance</th>
+            <th scope="col">Date received</th>
+            <th scope="col">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m, name, row in months %}
+          {% set payable = row.sdl_payable if row else None %}
+          {% set paid = row.sdl_paid if row else None %}
+          <tr>
+            <td class="ps-3 fw-semibold">{{ name }}</td>
+            <td class="text-center">
+              <input class="form-check-input" type="checkbox" name="recv_{{ m }}" value="1"
+                     {{ 'checked' if row and row.emp201_received }} aria-label="EMP201 received {{ name }}">
+            </td>
+            <td><input class="form-control form-control-sm text-end" name="payable_{{ m }}" inputmode="decimal"
+                       value="{{ '%.2f'|format(payable) if payable is not none else '' }}" aria-label="SDL payable {{ name }}"></td>
+            <td><input class="form-control form-control-sm text-end" name="paid_{{ m }}" inputmode="decimal"
+                       value="{{ '%.2f'|format(paid) if paid is not none else '' }}" aria-label="SDL paid {{ name }}"></td>
+            <td class="text-end">
+              {% if payable is not none and paid is not none %}
+                {% set var = payable - paid %}
+                <span class="badge {{ 'bg-success-subtle text-success' if var == 0 else 'bg-danger-subtle text-danger' }}">
+                  {{ '%.2f'|format(var) }}</span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td><input type="date" class="form-control form-control-sm" name="rdate_{{ m }}"
+                       value="{{ row.received_date if row and row.received_date else '' }}" aria-label="Date received {{ name }}"></td>
+            <td><input class="form-control form-control-sm" name="notes_{{ m }}" maxlength="300"
+                       value="{{ row.notes if row and row.notes else '' }}" aria-label="Notes {{ name }}"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot class="table-light fw-semibold">
+          <tr>
+            <td class="ps-3">Total {{ year }}</td>
+            <td></td>
+            <td class="text-end">{{ '{:,.2f}'.format(tot_payable) }}</td>
+            <td class="text-end">{{ '{:,.2f}'.format(tot_paid) }}</td>
+            <td class="text-end">
+              <span class="badge {{ 'bg-success-subtle text-success' if (tot_payable - tot_paid) == 0 else 'bg-danger-subtle text-danger' }}">
+                {{ '{:,.2f}'.format(tot_payable - tot_paid) }}</span>
+            </td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-end">
+      <button class="btn btn-teal btn-sm px-4">Save {{ year }}</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

@@ -550,11 +550,31 @@ def m004_mict_seta_sdl(db):
                           'Set SETA to MICT SETA and SDL number to L640813558 during upgrade','company_profile')""")
 
 
+# ─── 5. WSP: monthly SDL / EMP201 tracker ────────────────────────────────────
+
+def m005_sdl_tracker(db):
+    _script(db, """
+        CREATE TABLE sdl_tracker (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_month TEXT NOT NULL UNIQUE,          -- 'YYYY-MM'
+            emp201_received INTEGER NOT NULL DEFAULT 0,
+            sdl_payable REAL,
+            sdl_paid REAL,
+            received_date TEXT,
+            notes TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX ix_sdl_month ON sdl_tracker(period_month);
+    """)
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
     (3, "compliance records, workflow, report versions, evidence, rules", m003_compliance_records),
     (4, "Dash BPO: MICT SETA + SDL number", m004_mict_seta_sdl),
+    (5, "WSP: monthly SDL/EMP201 tracker", m005_sdl_tracker),
 ]
 
 

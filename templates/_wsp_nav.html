@@ -1,0 +1,7 @@
+{# Sub-navigation for the WSP / Skills Development module. #}
+<ul class="nav nav-pills gap-2 mb-4 flex-wrap" style="font-size:.85rem;">
+  <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp' %}active{% endif %}"
+      href="{{ url_for('wsp') }}"><i class="bi bi-mortarboard me-1" aria-hidden="true"></i>WSP / ATR</a></li>
+  <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp_sdl' %}active{% endif %}"
+      href="{{ url_for('wsp_sdl') }}"><i class="bi bi-cash-coin me-1" aria-hidden="true"></i>SDL Tracker</a></li>
+</ul>

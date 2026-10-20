@@ -4,6 +4,7 @@
 {% block page_title %}Workplace Skills Plan &amp; Annual Training Report{% endblock %}
 
 {% block content %}
+{% include "_wsp_nav.html" %}
 {{ period_picker(records, sel, status_labels, 'wsp', 'wsp') }}
 
 {% if not (company_info.seta and company_info.sdl_number) %}

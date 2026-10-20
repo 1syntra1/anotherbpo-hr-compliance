@@ -2017,6 +2017,86 @@ def wsp_assign_unlinked():
     return redirect(url_for("wsp", record=r["id"]))
 
 
+# ─── WSP operational trackers (SDL, grants, learnerships, bursaries) ──────────
+
+MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+               "July", "August", "September", "October", "November", "December"]
+
+
+def _money_or_none(v, field="Amount"):
+    """Parse a rand amount. Returns (value_or_None, error_or_None)."""
+    s = (v or "").strip().replace(",", "").replace(" ", "").replace("R", "")
+    if s == "":
+        return None, None
+    try:
+        n = float(s)
+    except ValueError:
+        return None, "%s must be a number." % field
+    if n != n or n < 0 or n > 1_000_000_000:
+        return None, "%s must be a positive amount." % field
+    return round(n, 2), None
+
+
+def _tracker_years():
+    y = date.today().year
+    return list(range(y + 1, y - 5, -1))
+
+
+@app.route("/wsp/sdl", methods=["GET", "POST"])
+@login_required
+def wsp_sdl():
+    """Monthly SDL / EMP201 tracker — one row per calendar month, saved for a whole year."""
+    db = get_db()
+    year = _int_or_none(request.values.get("year")) or date.today().year
+    if request.method == "POST":
+        errors = []
+        pending = []
+        for m in range(1, 13):
+            pm = "%04d-%02d" % (year, m)
+            payable, e1 = _money_or_none(request.form.get("payable_%d" % m), "SDL payable (%s)" % MONTH_NAMES[m - 1])
+            paid, e2 = _money_or_none(request.form.get("paid_%d" % m), "SDL paid (%s)" % MONTH_NAMES[m - 1])
+            for e in (e1, e2):
+                if e:
+                    errors.append(e)
+            rdate = (request.form.get("rdate_%d" % m) or "").strip() or None
+            if rdate:
+                try:
+                    date.fromisoformat(rdate)
+                except ValueError:
+                    errors.append("%s received date is invalid." % MONTH_NAMES[m - 1])
+                    rdate = None
+            notes = (request.form.get("notes_%d" % m) or "").strip()[:300] or None
+            received = 1 if request.form.get("recv_%d" % m) else 0
+            pending.append((pm, received, payable, paid, rdate, notes))
+        if errors:
+            for e in errors[:8]:
+                flash(e, "danger")
+            return redirect(url_for("wsp_sdl", year=year))
+        for pm, received, payable, paid, rdate, notes in pending:
+            has_data = received or payable is not None or paid is not None or rdate or notes
+            exists = db.execute("SELECT id FROM sdl_tracker WHERE period_month=?", (pm,)).fetchone()
+            if exists:
+                db.execute("""UPDATE sdl_tracker SET emp201_received=?, sdl_payable=?, sdl_paid=?, received_date=?,
+                              notes=?, updated_at=datetime('now'), updated_by=? WHERE period_month=?""",
+                           (received, payable, paid, rdate, notes, g.user["id"], pm))
+            elif has_data:
+                db.execute("""INSERT INTO sdl_tracker (period_month, emp201_received, sdl_payable, sdl_paid,
+                              received_date, notes, updated_by) VALUES (?,?,?,?,?,?,?)""",
+                           (pm, received, payable, paid, rdate, notes, g.user["id"]))
+        log_action("sdl_update", "wsp", "Updated SDL/EMP201 tracker for %d" % year, commit=False)
+        db.commit()
+        flash("SDL / EMP201 tracker saved for %d." % year, "success")
+        return redirect(url_for("wsp_sdl", year=year))
+
+    stored = {r["period_month"]: r for r in db.execute(
+        "SELECT * FROM sdl_tracker WHERE period_month LIKE ? ORDER BY period_month", ("%04d-%%" % year,)).fetchall()}
+    months = [(m, MONTH_NAMES[m - 1], stored.get("%04d-%02d" % (year, m))) for m in range(1, 13)]
+    tot_payable = sum((r["sdl_payable"] or 0) for r in stored.values())
+    tot_paid = sum((r["sdl_paid"] or 0) for r in stored.values())
+    return render_template("wsp_sdl.html", year=year, months=months, years=_tracker_years(),
+                           tot_payable=tot_payable, tot_paid=tot_paid)
+
+
 # ─── B-BBEE ──────────────────────────────────────────────────────────────────
 
 @app.route("/bbbee")
