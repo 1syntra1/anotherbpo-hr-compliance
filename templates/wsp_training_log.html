@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Monthly Training{% endblock %}
+{% block page_title %}Monthly Training Tracker{% endblock %}
+
+{% block content %}
+{% include "_wsp_nav.html" %}
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <form method="GET" action="{{ url_for('wsp_training_log') }}" class="d-flex align-items-center gap-2" id="yearform">
+    <label for="year" class="form-label small fw-semibold mb-0">Year</label>
+    <select id="year" name="year" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+    <input type="hidden" name="month" value="{{ month }}">
+    {% if funding %}<input type="hidden" name="funding" value="{{ funding }}">{% endif %}
+  </form>
+  <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="Funding filter">
+    <a class="btn btn-outline-secondary {{ 'active' if not funding }}" href="{{ url_for('wsp_training_log', year=year, month=month) }}">All</a>
+    {% for ft in funding_types %}
+    <a class="btn btn-outline-secondary {{ 'active' if funding == ft }}" href="{{ url_for('wsp_training_log', year=year, month=month, funding=ft) }}">{{ ft }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Month tabs (Jan–Dec) -->
+<ul class="nav nav-pills gap-1 mb-3 flex-wrap" style="font-size:.8rem;">
+  {% for mnum, mname in months %}
+  <li class="nav-item"><a class="nav-link py-1 px-2 {{ 'active' if mnum == month }}"
+      href="{{ url_for('wsp_training_log', year=year, month=mnum, funding=funding) }}">{{ mname[:3] }}</a></li>
+  {% endfor %}
+</ul>
+
+<div class="row g-4">
+  <div class="col-xl-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3 d-flex justify-content-between">
+        <span><i class="bi bi-calendar3 me-2 text-teal" aria-hidden="true"></i>{{ months[month-1][1] }} {{ year }}{% if funding %} — {{ funding }}{% endif %}</span>
+        <span class="badge bg-secondary">{{ events|length }}</span>
+      </div>
+      <div class="card-body">
+        {% for e in events %}
+        <div class="border-bottom pb-2 mb-2">
+          <div class="d-flex justify-content-between">
+            <div>
+              <span class="fw-semibold">{{ e.intervention_type }}</span>
+              <span class="badge {{ 'bg-info-subtle text-info' if e.funding_type != 'Internal' else 'bg-light text-dark border' }}">{{ e.funding_type }}</span>
+              <span class="badge bg-light text-dark border">{{ e.status }}</span>
+              <div class="small text-muted">
+                {{ e.training_date }}{% if e.employee_name %} · {{ e.employee_name }}{% elif e.num_attendees %} · {{ e.num_attendees }} attendees{% endif %}
+                {% if e.provider %} · {{ e.provider }}{% endif %}{% if e.nqf_level %} · NQF {{ e.nqf_level }}{% endif %}
+              </div>
+              {% if e.notes %}<div class="small text-muted">{{ e.notes }}</div>{% endif %}
+            </div>
+            <div class="text-end">
+              <div class="fw-semibold">R {{ '{:,.2f}'.format(e.cost or 0) }}</div>
+              <form method="POST" action="{{ url_for('wsp_training_event_delete', event_id=e.id) }}" class="d-inline"
+                    onsubmit="return confirm('Remove this training event and its documents?');">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <button class="btn btn-link btn-sm text-danger p-0">Remove</button>
+              </form>
+            </div>
+          </div>
+          <div class="mt-1">
+            {% for d in docs[e.id] %}
+            <span class="badge bg-light text-dark border me-1 mb-1">
+              <a href="{{ url_for('wsp_document_download', doc_id=d.id) }}" class="text-decoration-none"><i class="bi bi-paperclip" aria-hidden="true"></i> {{ d.doc_type }}</a>
+              <form method="POST" action="{{ url_for('wsp_document_delete', doc_id=d.id) }}" class="d-inline" onsubmit="return confirm('Delete this document?');">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="btn btn-link btn-sm text-danger p-0 ms-1" aria-label="Delete">&times;</button>
+              </form>
+            </span>
+            {% endfor %}
+            <form method="POST" action="{{ url_for('wsp_training_event_document', event_id=e.id) }}" enctype="multipart/form-data" class="d-flex gap-1 mt-1" style="max-width:520px;">
+              <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <select name="doc_type" class="form-select form-select-sm" style="width:auto">{% for t in doc_types %}<option>{{ t }}</option>{% endfor %}</select>
+              <input type="file" name="file" class="form-control form-control-sm" required>
+              <button class="btn btn-outline-secondary btn-sm">Upload</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-4">No training logged for {{ months[month-1][1] }} {{ year }}.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Monthly reporting by intervention -->
+    <div class="card border-0 shadow-sm mt-3">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-bar-chart me-2 text-teal" aria-hidden="true"></i>{{ months[month-1][1] }} by intervention</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0" style="font-size:.85rem;">
+          <caption class="visually-hidden">Monthly training summarised by intervention</caption>
+          <thead class="table-light"><tr><th class="ps-3" scope="col">Intervention</th><th scope="col" class="text-end">Events</th><th scope="col" class="text-end">Attendees</th><th scope="col" class="text-end">Cost (R)</th></tr></thead>
+          <tbody>
+            {% for s in summary %}
+            <tr><td class="ps-3">{{ s.intervention_type }}</td><td class="text-end">{{ s.n }}</td><td class="text-end">{{ s.attendees }}</td><td class="text-end">{{ '{:,.2f}'.format(s.cost) }}</td></tr>
+            {% else %}<tr><td colspan="4" class="text-center text-muted py-3">Nothing to report.</td></tr>{% endfor %}
+          </tbody>
+          <tfoot class="table-light fw-semibold"><tr><td class="ps-3">Total</td><td class="text-end">{{ month_total.n }}</td><td></td><td class="text-end">{{ '{:,.2f}'.format(month_total.c) }}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add -->
+  <div class="col-xl-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-plus-circle me-2 text-teal" aria-hidden="true"></i>Log training</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('wsp_training_event_add') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="month" value="{{ month }}">
+          <div class="mb-2"><label for="td" class="form-label small fw-semibold mb-0">Training date</label>
+            <input id="td" type="date" name="training_date" class="form-control form-control-sm" required value="{{ '%04d-%02d-01'|format(year, month) }}"></div>
+          <div class="mb-2"><label for="ti" class="form-label small fw-semibold mb-0">Intervention / programme</label><input id="ti" name="intervention_type" class="form-control form-control-sm" required maxlength="200"></div>
+          <div class="row g-2 mb-2">
+            <div class="col-6"><label for="tf" class="form-label small fw-semibold mb-0">Funding</label>
+              <select id="tf" name="funding_type" class="form-select form-select-sm">{% for ft in funding_types %}<option>{{ ft }}</option>{% endfor %}</select></div>
+            <div class="col-6"><label for="tcat" class="form-label small fw-semibold mb-0">Category</label><input id="tcat" name="category" class="form-control form-control-sm" maxlength="100"></div>
+          </div>
+          <div class="mb-2"><label for="temp" class="form-label small fw-semibold mb-0">Employee <span class="text-muted">(optional / group)</span></label>
+            <select id="temp" name="employee_id" class="form-select form-select-sm"><option value="">— group / not listed —</option>
+              {% for e in employees %}<option value="{{ e.id }}">{{ e.last_name }}, {{ e.first_name }} ({{ e.emp_number }})</option>{% endfor %}</select></div>
+          <div class="row g-2 mb-2">
+            <div class="col-6"><label for="tatt" class="form-label small fw-semibold mb-0">Attendees</label><input id="tatt" name="num_attendees" type="number" min="0" class="form-control form-control-sm"></div>
+            <div class="col-6"><label for="tnq" class="form-label small fw-semibold mb-0">NQF level</label><input id="tnq" name="nqf_level" class="form-control form-control-sm" maxlength="20"></div>
+            <div class="col-6"><label for="tco" class="form-label small fw-semibold mb-0">Cost (R)</label><input id="tco" name="cost" class="form-control form-control-sm" inputmode="decimal"></div>
+            <div class="col-6"><label for="tpr" class="form-label small fw-semibold mb-0">Provider</label><input id="tpr" name="provider" class="form-control form-control-sm" maxlength="200"></div>
+            <div class="col-6"><label for="tst" class="form-label small fw-semibold mb-0">Status</label>
+              <select id="tst" name="status" class="form-select form-select-sm">{% for s in statuses %}<option {{ 'selected' if s == 'Completed' }}>{{ s }}</option>{% endfor %}</select></div>
+          </div>
+          <div class="mb-2"><label for="tno" class="form-label small fw-semibold mb-0">Notes</label><input id="tno" name="notes" class="form-control form-control-sm" maxlength="300"></div>
+          <button class="btn btn-teal btn-sm w-100">Log training</button>
+        </form>
+        <p class="small text-muted mt-2 mb-0"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>For external/paid training, attach the attendance register, ID copies, invoice and POP on the event once saved.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -106,3 +106,30 @@ def test_learnership_add_update_delete(admin_client, app_module):
     assert query(app_module, "SELECT status, target_count FROM learnership_plans WHERE id=?", (pid,))[0]["status"] == "Recruiting"
     post(admin_client, "/wsp/learnerships/%d/delete" % pid, {}, token_from="/wsp/learnerships")
     assert query(app_module, "SELECT COUNT(*) FROM learnership_plans WHERE id=?", (pid,))[0][0] == 0
+
+
+def test_training_log_page_loads(admin_client):
+    r = admin_client.get("/wsp/training-log?year=2026&month=3")
+    assert r.status_code == 200 and b"by intervention" in r.data
+
+
+def test_training_event_add_and_month_summary(admin_client, app_module):
+    post(admin_client, "/wsp/training-log/add",
+         {"year": "2026", "month": "3", "training_date": "2026-03-10",
+          "intervention_type": "First Aid Level 1", "funding_type": "External",
+          "cost": "4500", "num_attendees": "8", "status": "Completed"},
+         token_from="/wsp/training-log")
+    rows = query(app_module, "SELECT intervention_type, funding_type, cost FROM training_events WHERE training_date LIKE '2026-03%'")
+    assert [tuple(r) for r in rows] == [("First Aid Level 1", "External", 4500.0)]
+    html = admin_client.get("/wsp/training-log?year=2026&month=3").get_data(as_text=True)
+    assert "First Aid Level 1" in html and "4,500.00" in html
+
+
+def test_training_external_filter(admin_client, app_module):
+    post(admin_client, "/wsp/training-log/add",
+         {"year": "2026", "month": "4", "training_date": "2026-04-02", "intervention_type": "Induction",
+          "funding_type": "Internal", "cost": "0"}, token_from="/wsp/training-log")
+    assert "Induction" in admin_client.get("/wsp/training-log?year=2026&month=4").get_data(as_text=True)
+    # Filtering to External empties the event list (the only event is Internal)
+    ext = admin_client.get("/wsp/training-log?year=2026&month=4&funding=External").get_data(as_text=True)
+    assert "No training logged" in ext

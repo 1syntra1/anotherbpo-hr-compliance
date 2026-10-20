@@ -2469,6 +2469,135 @@ def wsp_learnership_delete(plan_id):
     return redirect(url_for("wsp_learnerships", year=p["year"]))
 
 
+# ── Monthly training log (internal + external, with documents) ──
+
+FUNDING_TYPES = ["Internal", "External", "Paid"]
+TRAINING_EVENT_STATUSES = ["Planned", "In Progress", "Completed", "Cancelled"]
+
+
+@app.route("/wsp/training-log")
+@login_required
+def wsp_training_log():
+    db = get_db()
+    today = date.today()
+    year = _int_or_none(request.values.get("year")) or today.year
+    month = _int_or_none(request.values.get("month")) or today.month
+    if not 1 <= month <= 12:
+        month = today.month
+    funding = request.values.get("funding") if request.values.get("funding") in FUNDING_TYPES else None
+    prefix = "%04d-%02d%%" % (year, month)
+    q = "SELECT * FROM training_events WHERE training_date LIKE ?"
+    params = [prefix]
+    if funding:
+        q += " AND funding_type=?"
+        params.append(funding)
+    q += " ORDER BY training_date DESC, id DESC"
+    events = db.execute(q, params).fetchall()
+    docs = {e["id"]: _wsp_docs(db, "training", e["id"]) for e in events}
+    summary = db.execute(
+        """SELECT intervention_type, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost,
+                  COALESCE(SUM(COALESCE(num_attendees,1)),0) AS attendees
+           FROM training_events WHERE training_date LIKE ? GROUP BY intervention_type ORDER BY cost DESC""",
+        (prefix,)).fetchall()
+    month_total = db.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(cost),0) AS c FROM training_events WHERE training_date LIKE ?",
+        (prefix,)).fetchone()
+    employees = db.execute("SELECT id, emp_number, first_name, last_name FROM employees WHERE status='ACTIVE' "
+                           "ORDER BY last_name, first_name").fetchall()
+    return render_template("wsp_training_log.html", year=year, month=month, years=_tracker_years(),
+                           months=list(enumerate(MONTH_NAMES, 1)), funding=funding, funding_types=FUNDING_TYPES,
+                           events=events, docs=docs, summary=summary, month_total=month_total,
+                           statuses=TRAINING_EVENT_STATUSES, employees=employees, doc_types=WSP_DOC_TYPES)
+
+
+@app.route("/wsp/training-log/add", methods=["POST"])
+@login_required
+def wsp_training_event_add():
+    db = get_db()
+    f = request.form
+    year = _int_or_none(f.get("year")) or date.today().year
+    month = _int_or_none(f.get("month")) or date.today().month
+    errors = []
+    tdate = (f.get("training_date") or "").strip()
+    d = None
+    try:
+        d = date.fromisoformat(tdate)
+    except ValueError:
+        errors.append("Enter a valid training date.")
+    intervention = (f.get("intervention_type") or "").strip()[:200]
+    if not intervention:
+        errors.append("Describe the intervention / programme.")
+    cost, e = _money_or_none(f.get("cost"), "Cost")
+    if e:
+        errors.append(e)
+    guard = _formula_guard(f, ("intervention_type", "category", "provider", "notes"))
+    if guard:
+        errors.append(guard)
+    funding = f.get("funding_type") if f.get("funding_type") in FUNDING_TYPES else "Internal"
+    status = f.get("status") if f.get("status") in TRAINING_EVENT_STATUSES else "Completed"
+    emp = db.execute("SELECT * FROM employees WHERE id=?", (_int_or_none(f.get("employee_id")),)).fetchone() \
+        if _int_or_none(f.get("employee_id")) else None
+    if errors:
+        for er in errors[:6]:
+            flash(er, "danger")
+        return redirect(url_for("wsp_training_log", year=year, month=month))
+    cur = db.execute(
+        """INSERT INTO training_events (training_date, employee_id, employee_name, employee_number,
+               intervention_type, category, nqf_level, provider, cost, funding_type, num_attendees,
+               status, notes, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (tdate, emp["id"] if emp else None,
+         ("%s %s" % (emp["first_name"], emp["last_name"])) if emp else None,
+         emp["emp_number"] if emp else None, intervention,
+         (f.get("category") or "").strip()[:100] or None, (f.get("nqf_level") or "").strip()[:20] or None,
+         (f.get("provider") or "").strip()[:200] or None, cost or 0, funding,
+         _int_or_none(f.get("num_attendees")), status, (f.get("notes") or "").strip()[:300] or None, g.user["id"]))
+    log_action("training_event_add", "wsp", "Logged %s training '%s' on %s" % (funding.lower(), intervention, tdate),
+               entity="training_event", entity_id=cur.lastrowid, commit=False)
+    db.commit()
+    flash("Training logged.", "success")
+    return redirect(url_for("wsp_training_log", year=d.year, month=d.month))
+
+
+@app.route("/wsp/training-log/<int:event_id>/delete", methods=["POST"])
+@login_required
+def wsp_training_event_delete(event_id):
+    db = get_db()
+    ev = db.execute("SELECT * FROM training_events WHERE id=?", (event_id,)).fetchone()
+    if ev is None:
+        abort(404)
+    for d in _wsp_docs(db, "training", event_id):
+        try:
+            os.remove(os.path.join(DATA_DIR, "wsp_docs", os.path.basename(d["stored_name"])))
+        except OSError:
+            pass
+    db.execute("DELETE FROM wsp_documents WHERE entity_type='training' AND entity_id=?", (event_id,))
+    db.execute("DELETE FROM training_events WHERE id=?", (event_id,))
+    log_action("training_event_delete", "wsp", "Deleted training event '%s'" % ev["intervention_type"],
+               entity="training_event", entity_id=event_id, commit=False)
+    db.commit()
+    flash("Training event removed.", "success")
+    return redirect(url_for("wsp_training_log", year=ev["training_date"][:4], month=int(ev["training_date"][5:7])))
+
+
+@app.route("/wsp/training-log/<int:event_id>/document", methods=["POST"])
+@login_required
+def wsp_training_event_document(event_id):
+    db = get_db()
+    ev = db.execute("SELECT * FROM training_events WHERE id=?", (event_id,)).fetchone()
+    if ev is None:
+        abort(404)
+    doc_type = request.form.get("doc_type") if request.form.get("doc_type") in WSP_DOC_TYPES else "Other"
+    doc_id, err = _store_wsp_document(db, "training", event_id, request.files.get("file"), doc_type)
+    if err:
+        flash(err, "danger")
+    else:
+        log_action("wsp_doc_upload", "wsp", "Added %s to training '%s'" % (doc_type, ev["intervention_type"]),
+                   entity="wsp_document", entity_id=doc_id, commit=False)
+        db.commit()
+        flash("Document added.", "success")
+    return redirect(url_for("wsp_training_log", year=ev["training_date"][:4], month=int(ev["training_date"][5:7])))
+
+
 # ─── B-BBEE ──────────────────────────────────────────────────────────────────
 
 @app.route("/bbbee")

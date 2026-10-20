@@ -650,6 +650,34 @@ def m008_learnerships(db):
     """)
 
 
+# ─── 9. WSP: monthly training events (internal + external) ───────────────────
+
+def m009_training_events(db):
+    _script(db, """
+        CREATE TABLE training_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            training_date TEXT NOT NULL,                 -- ISO date; month = substr(,1,7)
+            employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+            employee_name TEXT,
+            employee_number TEXT,
+            intervention_type TEXT NOT NULL,
+            category TEXT,
+            nqf_level TEXT,
+            provider TEXT,
+            cost REAL NOT NULL DEFAULT 0,
+            funding_type TEXT NOT NULL DEFAULT 'Internal',   -- Internal | External | Paid
+            num_attendees INTEGER,
+            status TEXT NOT NULL DEFAULT 'Completed',
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX ix_trainingev_date ON training_events(training_date);
+        CREATE INDEX ix_trainingev_funding ON training_events(funding_type);
+    """)
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
@@ -659,6 +687,7 @@ MIGRATIONS = [
     (6, "WSP: SETA grant tracker", m006_grants),
     (7, "WSP: bursary tracker + operational document store", m007_bursaries),
     (8, "WSP: learnership & internship plans", m008_learnerships),
+    (9, "WSP: monthly training events (internal + external)", m009_training_events),
 ]
 
 

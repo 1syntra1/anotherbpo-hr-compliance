@@ -2,6 +2,8 @@
 <ul class="nav nav-pills gap-2 mb-4 flex-wrap" style="font-size:.85rem;">
   <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp' %}active{% endif %}"
       href="{{ url_for('wsp') }}"><i class="bi bi-mortarboard me-1" aria-hidden="true"></i>WSP / ATR</a></li>
+  <li class="nav-item"><a class="nav-link {% if 'training_log' in (request.endpoint or '') or 'training_event' in (request.endpoint or '') %}active{% endif %}"
+      href="{{ url_for('wsp_training_log') }}"><i class="bi bi-calendar3 me-1" aria-hidden="true"></i>Monthly Training</a></li>
   <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp_sdl' %}active{% endif %}"
       href="{{ url_for('wsp_sdl') }}"><i class="bi bi-cash-coin me-1" aria-hidden="true"></i>SDL Tracker</a></li>
   <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp_grants' %}active{% endif %}"
