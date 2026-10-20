@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Bursary Tracker{% endblock %}
+{% block page_title %}Bursary Tracker{% endblock %}
+
+{% block content %}
+{% include "_wsp_nav.html" %}
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <form method="GET" action="{{ url_for('wsp_bursaries') }}" class="d-flex align-items-center gap-2">
+    <label for="year" class="form-label small fw-semibold mb-0">Year</label>
+    <select id="year" name="year" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+
+<div class="row g-4">
+  <!-- Budget summary + config -->
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between"><span class="text-muted small">Annual budget</span><span class="fw-semibold">R {{ '{:,.2f}'.format(budget) }}</span></div>
+        <div class="d-flex justify-content-between"><span class="text-muted small">Awarded</span><span class="fw-semibold">R {{ '{:,.2f}'.format(awarded_total) }}</span></div>
+        <div class="d-flex justify-content-between"><span class="text-muted small">Remaining</span>
+          <span class="fw-semibold {{ 'text-danger' if remaining < 0 else 'text-success' }}">R {{ '{:,.2f}'.format(remaining) }}</span></div>
+        {% set pct = (awarded_total / budget * 100) if budget else 0 %}
+        <div class="progress mt-2" style="height:8px;" role="progressbar" aria-valuenow="{{ pct|round }}" aria-valuemin="0" aria-valuemax="100">
+          <div class="progress-bar {{ 'bg-danger' if remaining < 0 else 'bg-teal' }}" style="width:{{ [pct,100]|min }}%; background-color:var(--cb-teal-dark);"></div>
+        </div>
+        <div class="d-flex justify-content-between mt-2"><span class="text-muted small">Bursaries awarded</span>
+          <span class="fw-semibold {{ 'text-danger' if awards|length > target else '' }}">{{ awards|length }} / {{ target }}</span></div>
+      </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-sliders me-2 text-teal" aria-hidden="true"></i>Budget &amp; target</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('wsp_bursaries_config') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="year" value="{{ year }}">
+          <div class="mb-2"><label for="bt" class="form-label small fw-semibold mb-0">Annual budget (R)</label>
+            <input id="bt" name="budget_total" class="form-control form-control-sm" inputmode="decimal" value="{{ '%.2f'|format(budget) }}"></div>
+          <div class="mb-2"><label for="tc" class="form-label small fw-semibold mb-0">Target number of bursaries</label>
+            <input id="tc" name="target_count" type="number" min="0" class="form-control form-control-sm" value="{{ target }}"></div>
+          <button class="btn btn-outline-secondary btn-sm w-100">Save budget</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Awards -->
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-plus-circle me-2 text-teal" aria-hidden="true"></i>Award a bursary</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('wsp_bursary_award') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="year" value="{{ year }}">
+          <div class="row g-2">
+            <div class="col-md-6"><label for="sn" class="form-label small fw-semibold mb-0">Student name</label><input id="sn" name="student_name" class="form-control form-control-sm" required maxlength="200"></div>
+            <div class="col-md-6"><label for="in" class="form-label small fw-semibold mb-0">Institution</label><input id="in" name="institution" class="form-control form-control-sm" maxlength="200"></div>
+            <div class="col-md-6"><label for="qu" class="form-label small fw-semibold mb-0">Qualification</label><input id="qu" name="qualification" class="form-control form-control-sm" maxlength="200"></div>
+            <div class="col-md-3"><label for="am" class="form-label small fw-semibold mb-0">Amount (R)</label><input id="am" name="amount_awarded" class="form-control form-control-sm" inputmode="decimal"></div>
+            <div class="col-md-3"><label for="st" class="form-label small fw-semibold mb-0">Status</label>
+              <select id="st" name="status" class="form-select form-select-sm">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></div>
+            <div class="col-12"><label for="no" class="form-label small fw-semibold mb-0">Notes</label><input id="no" name="notes" class="form-control form-control-sm" maxlength="300"></div>
+          </div>
+          <button class="btn btn-teal btn-sm mt-2">Add bursary</button>
+        </form>
+      </div>
+    </div>
+
+    {% for a in awards %}
+    <div class="card border-0 shadow-sm mb-2">
+      <div class="card-body py-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <span class="fw-semibold">{{ a.student_name }}</span>
+            <span class="badge bg-light text-dark border ms-1">{{ a.status }}</span>
+            <div class="small text-muted">{{ a.institution or '—' }}{% if a.qualification %} · {{ a.qualification }}{% endif %}</div>
+            {% if a.notes %}<div class="small text-muted">{{ a.notes }}</div>{% endif %}
+          </div>
+          <div class="text-end">
+            <div class="fw-semibold">R {{ '{:,.2f}'.format(a.amount_awarded or 0) }}</div>
+            <form method="POST" action="{{ url_for('wsp_bursary_delete', award_id=a.id) }}" class="d-inline"
+                  onsubmit="return confirm('Remove this bursary and its documents?');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <button class="btn btn-link btn-sm text-danger p-0">Remove</button>
+            </form>
+          </div>
+        </div>
+        <!-- documents -->
+        <div class="mt-2">
+          {% for d in docs[a.id] %}
+          <span class="badge bg-light text-dark border me-1 mb-1">
+            <a href="{{ url_for('wsp_document_download', doc_id=d.id) }}" class="text-decoration-none"><i class="bi bi-paperclip" aria-hidden="true"></i> {{ d.doc_type }}: {{ d.original_name }}</a>
+            <form method="POST" action="{{ url_for('wsp_document_delete', doc_id=d.id) }}" class="d-inline" onsubmit="return confirm('Delete this document?');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="btn btn-link btn-sm text-danger p-0 ms-1" aria-label="Delete document">&times;</button>
+            </form>
+          </span>
+          {% endfor %}
+          <form method="POST" action="{{ url_for('wsp_bursary_document', award_id=a.id) }}" enctype="multipart/form-data" class="d-flex gap-1 mt-1" style="max-width:520px;">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <select name="doc_type" class="form-select form-select-sm" style="width:auto">{% for t in doc_types %}<option>{{ t }}</option>{% endfor %}</select>
+            <input type="file" name="file" class="form-control form-control-sm" required>
+            <button class="btn btn-outline-secondary btn-sm">Upload</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-4">No bursaries awarded for {{ year }} yet.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -590,6 +590,46 @@ def m006_grants(db):
     """)
 
 
+# ─── 7. WSP: bursary tracker + shared operational document store ─────────────
+
+def m007_bursaries(db):
+    _script(db, """
+        CREATE TABLE bursary_budgets (
+            year INTEGER PRIMARY KEY,
+            budget_total REAL NOT NULL DEFAULT 50000,
+            target_count INTEGER NOT NULL DEFAULT 10,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE TABLE bursary_awards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year INTEGER NOT NULL,
+            student_name TEXT NOT NULL,
+            institution TEXT,
+            qualification TEXT,
+            amount_awarded REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Awarded',
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX ix_bursary_year ON bursary_awards(year);
+
+        CREATE TABLE wsp_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,            -- 'bursary' | 'training' | 'learnership'
+            entity_id INTEGER NOT NULL,
+            doc_type TEXT,                         -- Attendance register, ID copy, Invoice, POP, ...
+            original_name TEXT NOT NULL, stored_name TEXT NOT NULL UNIQUE,
+            mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX ix_wspdoc_entity ON wsp_documents(entity_type, entity_id);
+    """)
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
@@ -597,6 +637,7 @@ MIGRATIONS = [
     (4, "Dash BPO: MICT SETA + SDL number", m004_mict_seta_sdl),
     (5, "WSP: monthly SDL/EMP201 tracker", m005_sdl_tracker),
     (6, "WSP: SETA grant tracker", m006_grants),
+    (7, "WSP: bursary tracker + operational document store", m007_bursaries),
 ]
 
 

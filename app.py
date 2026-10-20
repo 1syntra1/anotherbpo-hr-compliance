@@ -2155,6 +2155,209 @@ def wsp_grants():
                            statuses=GRANT_STATUSES, total=total)
 
 
+# ── Shared operational document store (bursaries, training, learnerships) ──
+
+WSP_DOC_TYPES = ["Attendance register", "ID copy", "Invoice", "Proof of payment", "Training material",
+                 "Assessment", "Certificate", "Signed agreement", "Other"]
+
+
+def _store_wsp_document(db, entity_type, entity_id, file, doc_type):
+    """Securely store an uploaded operational document. Returns (doc_id, error)."""
+    import hashlib
+    import uuid
+    if not file or not file.filename:
+        return None, "Choose a file."
+    original = os.path.basename(file.filename.replace("\\", "/"))[:200]
+    ext = original.rsplit(".", 1)[-1].lower() if "." in original else ""
+    data = file.read()
+    spec = EVIDENCE_TYPES.get(ext)
+    if spec is None or not data or not spec[1](data):
+        return None, ("That file type is not allowed, or its content does not match its extension. Allowed: %s."
+                      % ", ".join(sorted(EVIDENCE_TYPES)))
+    folder = os.path.join(DATA_DIR, "wsp_docs")
+    os.makedirs(folder, exist_ok=True)
+    stored = "%s.%s" % (uuid.uuid4().hex, ext)
+    with open(os.path.join(folder, stored), "wb") as fh:
+        fh.write(data)
+    try:
+        cur = db.execute(
+            """INSERT INTO wsp_documents (entity_type, entity_id, doc_type, original_name, stored_name,
+                   mime, size, sha256, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (entity_type, entity_id, doc_type, original, stored, spec[0], len(data),
+             hashlib.sha256(data).hexdigest(), g.user["id"]))
+        return cur.lastrowid, None
+    except Exception:
+        os.remove(os.path.join(folder, stored))
+        raise
+
+
+def _wsp_docs(db, entity_type, entity_id):
+    return db.execute("SELECT * FROM wsp_documents WHERE entity_type=? AND entity_id=? ORDER BY id DESC",
+                      (entity_type, entity_id)).fetchall()
+
+
+@app.route("/wsp/document/<int:doc_id>")
+@login_required
+def wsp_document_download(doc_id):
+    import hashlib
+    db = get_db()
+    d = db.execute("SELECT * FROM wsp_documents WHERE id=?", (doc_id,)).fetchone()
+    if d is None:
+        abort(404)
+    path = os.path.join(DATA_DIR, "wsp_docs", os.path.basename(d["stored_name"]))
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        flash("The document file is missing. Restore it from backup.", "danger")
+        return redirect(request.referrer or url_for("wsp"))
+    if hashlib.sha256(data).hexdigest() != d["sha256"]:
+        flash("The document does not match its recorded fingerprint. Restore it from backup.", "danger")
+        return redirect(request.referrer or url_for("wsp"))
+    log_action("wsp_doc_download", "wsp", "Downloaded document '%s'" % d["original_name"],
+               entity="wsp_document", entity_id=doc_id)
+    return send_file(io.BytesIO(data), mimetype=d["mime"], as_attachment=True, download_name=d["original_name"])
+
+
+@app.route("/wsp/document/<int:doc_id>/delete", methods=["POST"])
+@login_required
+def wsp_document_delete(doc_id):
+    db = get_db()
+    d = db.execute("SELECT * FROM wsp_documents WHERE id=?", (doc_id,)).fetchone()
+    if d is None:
+        abort(404)
+    db.execute("DELETE FROM wsp_documents WHERE id=?", (doc_id,))
+    log_action("wsp_doc_delete", "wsp", "Deleted document '%s'" % d["original_name"],
+               entity="wsp_document", entity_id=doc_id, commit=False)
+    db.commit()
+    try:
+        os.remove(os.path.join(DATA_DIR, "wsp_docs", os.path.basename(d["stored_name"])))
+    except OSError:
+        pass
+    flash("Document removed.", "success")
+    return redirect(request.referrer or url_for("wsp"))
+
+
+# ── Bursaries ──
+
+BURSARY_STATUSES = ["Awarded", "Active", "Completed", "Withdrawn", "Pending"]
+DEFAULT_BURSARY_BUDGET = 50000.0
+DEFAULT_BURSARY_COUNT = 10
+
+
+def _formula_guard(f, fields):
+    for k in fields:
+        if (f.get(k) or "").lstrip().startswith(("=", "+", "@")):
+            return "%s looks like a spreadsheet formula, which is not allowed." % k.replace("_", " ").capitalize()
+    return None
+
+
+@app.route("/wsp/bursaries")
+@login_required
+def wsp_bursaries():
+    db = get_db()
+    year = _int_or_none(request.values.get("year")) or date.today().year
+    cfg = db.execute("SELECT * FROM bursary_budgets WHERE year=?", (year,)).fetchone()
+    budget = cfg["budget_total"] if cfg else DEFAULT_BURSARY_BUDGET
+    target = cfg["target_count"] if cfg else DEFAULT_BURSARY_COUNT
+    awards = db.execute("SELECT * FROM bursary_awards WHERE year=? ORDER BY id DESC", (year,)).fetchall()
+    awarded_total = sum((a["amount_awarded"] or 0) for a in awards)
+    docs = {a["id"]: _wsp_docs(db, "bursary", a["id"]) for a in awards}
+    return render_template("wsp_bursaries.html", year=year, years=_tracker_years(), budget=budget, target=target,
+                           awards=awards, awarded_total=awarded_total, remaining=budget - awarded_total,
+                           statuses=BURSARY_STATUSES, docs=docs, doc_types=WSP_DOC_TYPES)
+
+
+@app.route("/wsp/bursaries/config", methods=["POST"])
+@login_required
+def wsp_bursaries_config():
+    db = get_db()
+    year = _int_or_none(request.form.get("year")) or date.today().year
+    budget, e = _money_or_none(request.form.get("budget_total"), "Budget")
+    target = _int_or_none(request.form.get("target_count"))
+    if e or budget is None:
+        flash(e or "Enter an annual budget.", "danger")
+        return redirect(url_for("wsp_bursaries", year=year))
+    db.execute("""INSERT INTO bursary_budgets (year, budget_total, target_count, updated_by) VALUES (?,?,?,?)
+                  ON CONFLICT(year) DO UPDATE SET budget_total=excluded.budget_total,
+                  target_count=excluded.target_count, updated_at=datetime('now'), updated_by=excluded.updated_by""",
+               (year, budget, target if target is not None else DEFAULT_BURSARY_COUNT, g.user["id"]))
+    log_action("bursary_config", "wsp", "Set bursary budget for %d to R%.2f / %s bursaries"
+               % (year, budget, target), commit=False)
+    db.commit()
+    flash("Bursary budget saved.", "success")
+    return redirect(url_for("wsp_bursaries", year=year))
+
+
+@app.route("/wsp/bursaries/award", methods=["POST"])
+@login_required
+def wsp_bursary_award():
+    db = get_db()
+    f = request.form
+    year = _int_or_none(f.get("year")) or date.today().year
+    name = (f.get("student_name") or "").strip()[:200]
+    if not name:
+        flash("Student name is required.", "danger")
+        return redirect(url_for("wsp_bursaries", year=year))
+    amount, e = _money_or_none(f.get("amount_awarded"), "Amount awarded")
+    guard = _formula_guard(f, ("student_name", "institution", "qualification", "notes"))
+    if e or guard:
+        flash(e or guard, "danger")
+        return redirect(url_for("wsp_bursaries", year=year))
+    status = f.get("status") if f.get("status") in BURSARY_STATUSES else "Awarded"
+    cur = db.execute(
+        """INSERT INTO bursary_awards (year, student_name, institution, qualification, amount_awarded,
+               status, notes, updated_by) VALUES (?,?,?,?,?,?,?,?)""",
+        (year, name, (f.get("institution") or "").strip()[:200] or None,
+         (f.get("qualification") or "").strip()[:200] or None, amount or 0, status,
+         (f.get("notes") or "").strip()[:300] or None, g.user["id"]))
+    log_action("bursary_award", "wsp", "Added bursary for %s (%d)" % (name, year),
+               entity="bursary_award", entity_id=cur.lastrowid, commit=False)
+    db.commit()
+    flash("Bursary award added.", "success")
+    return redirect(url_for("wsp_bursaries", year=year))
+
+
+@app.route("/wsp/bursaries/award/<int:award_id>/delete", methods=["POST"])
+@login_required
+def wsp_bursary_delete(award_id):
+    db = get_db()
+    a = db.execute("SELECT * FROM bursary_awards WHERE id=?", (award_id,)).fetchone()
+    if a is None:
+        abort(404)
+    for d in _wsp_docs(db, "bursary", award_id):
+        try:
+            os.remove(os.path.join(DATA_DIR, "wsp_docs", os.path.basename(d["stored_name"])))
+        except OSError:
+            pass
+    db.execute("DELETE FROM wsp_documents WHERE entity_type='bursary' AND entity_id=?", (award_id,))
+    db.execute("DELETE FROM bursary_awards WHERE id=?", (award_id,))
+    log_action("bursary_delete", "wsp", "Deleted bursary for %s" % a["student_name"],
+               entity="bursary_award", entity_id=award_id, commit=False)
+    db.commit()
+    flash("Bursary award removed.", "success")
+    return redirect(url_for("wsp_bursaries", year=a["year"]))
+
+
+@app.route("/wsp/bursaries/award/<int:award_id>/document", methods=["POST"])
+@login_required
+def wsp_bursary_document(award_id):
+    db = get_db()
+    a = db.execute("SELECT * FROM bursary_awards WHERE id=?", (award_id,)).fetchone()
+    if a is None:
+        abort(404)
+    doc_type = request.form.get("doc_type") if request.form.get("doc_type") in WSP_DOC_TYPES else "Other"
+    doc_id, err = _store_wsp_document(db, "bursary", award_id, request.files.get("file"), doc_type)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("wsp_bursaries", year=a["year"]))
+    log_action("wsp_doc_upload", "wsp", "Added %s to bursary for %s" % (doc_type, a["student_name"]),
+               entity="wsp_document", entity_id=doc_id, commit=False)
+    db.commit()
+    flash("Document added.", "success")
+    return redirect(url_for("wsp_bursaries", year=a["year"]))
+
+
 # ─── B-BBEE ──────────────────────────────────────────────────────────────────
 
 @app.route("/bbbee")

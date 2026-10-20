@@ -1,4 +1,6 @@
 """WSP operational trackers (SDL/EMP201, grants, learnerships, bursaries)."""
+import io
+
 from tests.conftest import csrf, post, query
 
 
@@ -38,3 +40,49 @@ def test_grants_save(admin_client, app_module):
          token_from="/wsp/grants")
     rows = query(app_module, "SELECT amount_received, status FROM grants WHERE year=2026 AND quarter='Q2' AND grant_type='Mandatory'")
     assert [tuple(r) for r in rows] == [(25000.0, "Received")]
+
+
+def test_bursaries_default_budget(admin_client):
+    html = admin_client.get("/wsp/bursaries?year=2026").get_data(as_text=True)
+    assert "50,000.00" in html and "/ 10" in html  # Dash default: R50k across 10
+
+
+def test_bursary_award_and_remaining(admin_client, app_module):
+    post(admin_client, "/wsp/bursaries/award?year=2026",
+         {"year": "2026", "student_name": "Test Student", "institution": "UCT",
+          "qualification": "BSc", "amount_awarded": "20000", "status": "Awarded"},
+         token_from="/wsp/bursaries")
+    rows = query(app_module, "SELECT student_name, amount_awarded FROM bursary_awards WHERE year=2026")
+    assert [tuple(r) for r in rows] == [("Test Student", 20000.0)]
+    html = admin_client.get("/wsp/bursaries?year=2026").get_data(as_text=True)
+    assert "30,000.00" in html  # remaining = 50000 - 20000
+
+
+def test_bursary_document_upload_download_delete(admin_client, app_module):
+    post(admin_client, "/wsp/bursaries/award?year=2026",
+         {"year": "2026", "student_name": "Doc Student", "amount_awarded": "1000"}, token_from="/wsp/bursaries")
+    aid = query(app_module, "SELECT id FROM bursary_awards WHERE student_name='Doc Student'")[0][0]
+    pdf = b"%PDF-1.4\ntest\n%%EOF\n"
+    r = admin_client.post("/wsp/bursaries/award/%d/document" % aid,
+                          data={"_csrf": csrf(admin_client, "/wsp/bursaries"), "doc_type": "Signed agreement",
+                                "file": (io.BytesIO(pdf), "agreement.pdf")},
+                          content_type="multipart/form-data")
+    assert r.status_code in (302, 303)
+    docs = query(app_module, "SELECT id, original_name FROM wsp_documents WHERE entity_type='bursary' AND entity_id=?", (aid,))
+    assert docs and docs[0][1] == "agreement.pdf"
+    did = docs[0][0]
+    dl = admin_client.get("/wsp/document/%d" % did)
+    assert dl.status_code == 200 and dl.data == pdf
+    admin_client.post("/wsp/document/%d/delete" % did, data={"_csrf": csrf(admin_client, "/wsp/bursaries")})
+    assert query(app_module, "SELECT COUNT(*) FROM wsp_documents WHERE id=?", (did,))[0][0] == 0
+
+
+def test_bursary_rejects_disguised_executable(admin_client, app_module):
+    post(admin_client, "/wsp/bursaries/award?year=2026",
+         {"year": "2026", "student_name": "X", "amount_awarded": "1"}, token_from="/wsp/bursaries")
+    aid = query(app_module, "SELECT id FROM bursary_awards WHERE student_name='X'")[0][0]
+    admin_client.post("/wsp/bursaries/award/%d/document" % aid,
+                      data={"_csrf": csrf(admin_client, "/wsp/bursaries"), "doc_type": "Invoice",
+                            "file": (io.BytesIO(b"MZ\x90\x00 not a pdf"), "evil.pdf")},
+                      content_type="multipart/form-data")
+    assert query(app_module, "SELECT COUNT(*) FROM wsp_documents WHERE entity_id=?", (aid,))[0][0] == 0
