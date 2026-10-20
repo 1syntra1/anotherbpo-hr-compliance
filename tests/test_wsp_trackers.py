@@ -166,3 +166,24 @@ def test_wsp_dashboard_aggregates(admin_client):
     assert "Interventions completed" in html and "Bursaries" in html
     assert "3,000" in html          # training spend
     assert "35,000.00" in html      # bursary remaining = 50000 - 15000
+
+
+def test_reminders_engine_flags_missing_capture(app_module):
+    """A fresh DB (no training/SDL/grants captured) yields reminders, and they render."""
+    from datetime import date
+    from modules.reminders import compute_wsp_reminders
+    db = app_module.connect_db()
+    try:
+        rem = compute_wsp_reminders(db, today=date(2026, 7, 15))
+        titles = " ".join(r["title"] for r in rem)
+        assert "Log training for June 2026" in titles          # monthly capture
+        assert "EMP201" in titles                               # SDL/EMP201
+        assert any("mandatory grant" in r["title"].lower() for r in rem)
+    finally:
+        db.close()
+
+
+def test_reminders_render_on_wsp_dashboard(admin_client):
+    r = admin_client.get("/wsp/dashboard")
+    assert r.status_code == 200
+    assert b"Reminders" in r.data

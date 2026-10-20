@@ -257,7 +257,10 @@ def test_company_change_does_not_alter_old_report(app_module, admin_client):
     generate(admin_client, rid, "eea2")
     v1 = versions(app_module, rid, "eea2")[0]
     form_post(admin_client, "/company", {"company_name": "Beta Pty Ltd"}, "/company")
-    assert query(app_module, "SELECT COUNT(*) FROM company_profiles")[0][0] == 2
+    # Each save appends a new immutable version; the last two are this test's edits
+    # (earlier versions may be seeded by migrations, e.g. the MICT SETA / SDL baseline).
+    names = [r[0] for r in query(app_module, "SELECT company_name FROM company_profiles ORDER BY id")]
+    assert names[-2:] == ["Alpha Pty Ltd", "Beta Pty Ltd"]
     data = xlsx_values(admin_client.get("/reports/%d/download" % v1["id"]).data)
     flat = [c for row in data["EEA2"] for c in row]
     assert "Alpha Pty Ltd" in flat and "Beta Pty Ltd" not in flat

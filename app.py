@@ -2097,7 +2097,7 @@ def wsp_sdl():
                            tot_payable=tot_payable, tot_paid=tot_paid)
 
 
-QUARTERS = ["Q1", "Q2", "Q3", "Q4"]
+GRANT_QUARTERS = ["Q1", "Q2", "Q3", "Q4"]
 GRANT_STATUSES = ["Pending", "Received", "Partially received", "Not received", "Queried"]
 
 
@@ -2111,7 +2111,7 @@ def wsp_grants():
     if request.method == "POST":
         errors = []
         pending = []
-        for q in QUARTERS:
+        for q in GRANT_QUARTERS:
             amount, e = _money_or_none(request.form.get("amount_%s" % q), "%s amount" % q)
             if e:
                 errors.append(e)
@@ -2149,7 +2149,7 @@ def wsp_grants():
 
     stored = {r["quarter"]: r for r in db.execute(
         "SELECT * FROM grants WHERE grant_type=? AND year=?", (gtype, year)).fetchall()}
-    quarters = [(q, stored.get(q)) for q in QUARTERS]
+    quarters = [(q, stored.get(q)) for q in GRANT_QUARTERS]
     total = sum((r["amount_received"] or 0) for r in stored.values())
     return render_template("wsp_grants.html", year=year, quarters=quarters, years=_tracker_years(),
                            statuses=GRANT_STATUSES, total=total)
@@ -2274,8 +2274,11 @@ def wsp_dashboard():
 
     sdl = one("SELECT COALESCE(SUM(sdl_payable),0) payable, COALESCE(SUM(sdl_paid),0) paid FROM sdl_tracker WHERE period_month LIKE ?", (yp,))
 
+    from modules.reminders import compute_wsp_reminders
+    reminders = compute_wsp_reminders(db)
+
     return render_template(
-        "wsp_dashboard.html", year=year, years=_tracker_years(),
+        "wsp_dashboard.html", year=year, years=_tracker_years(), reminders=reminders,
         te_planned=te_planned, te_completed=te_completed, te_spend=te_spend,
         emp_trained=emp_trained, attendances=attendances, skills_progs=skills_progs,
         mandatory=mandatory, discretionary=discretionary,
