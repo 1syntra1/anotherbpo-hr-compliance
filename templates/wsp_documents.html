@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Document Repository{% endblock %}
+{% block page_title %}Training &amp; Skills Document Repository{% endblock %}
+
+{% block content %}
+{% include "_wsp_nav.html" %}
+
+<form method="GET" action="{{ url_for('wsp_documents_repo') }}" class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <label for="entity_type" class="form-label small fw-semibold mb-0">Source</label>
+  <select id="entity_type" name="entity_type" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+    <option value="">All sources</option>
+    {% for v, lbl in [('training','Training'),('bursary','Bursary'),('learnership','Learnership')] %}
+      <option value="{{ v }}" {{ 'selected' if etype == v }}>{{ lbl }}</option>{% endfor %}
+  </select>
+  <label for="doc_type" class="form-label small fw-semibold mb-0">Type</label>
+  <select id="doc_type" name="doc_type" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+    <option value="">All types</option>
+    {% for t in doc_types %}<option value="{{ t }}" {{ 'selected' if dtype == t }}>{{ t }}</option>{% endfor %}
+  </select>
+  <span class="text-muted small ms-auto">{{ total }} document(s)</span>
+</form>
+
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0" style="font-size:.85rem;">
+      <caption class="visually-hidden">All supporting documents</caption>
+      <thead class="table-light">
+        <tr><th class="ps-3" scope="col">Source</th><th scope="col">Type</th><th scope="col">File</th>
+            <th scope="col" class="text-end">Size</th><th scope="col">Uploaded</th><th scope="col">By</th></tr>
+      </thead>
+      <tbody>
+        {% for row in docs %}
+        <tr>
+          <td class="ps-3">{{ row.source }}</td>
+          <td><span class="badge bg-light text-dark border">{{ row.d.doc_type }}</span></td>
+          <td><a href="{{ url_for('wsp_document_download', doc_id=row.d.id) }}"><i class="bi bi-paperclip" aria-hidden="true"></i> {{ row.d.original_name }}</a></td>
+          <td class="text-end text-muted">{{ (row.d.size / 1024)|round(1) }} KB</td>
+          <td class="text-muted small">{{ row.d.uploaded_at[:16] }}</td>
+          <td class="text-muted small">{{ row.by }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No documents yet. Upload them against training events, bursaries or learnerships.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

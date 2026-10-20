@@ -133,3 +133,20 @@ def test_training_external_filter(admin_client, app_module):
     # Filtering to External empties the event list (the only event is Internal)
     ext = admin_client.get("/wsp/training-log?year=2026&month=4&funding=External").get_data(as_text=True)
     assert "No training logged" in ext
+
+
+def test_document_repository_lists_uploads(admin_client, app_module):
+    # create an external training event with a document, then confirm it appears in the repository
+    post(admin_client, "/wsp/training-log/add",
+         {"year": "2026", "month": "5", "training_date": "2026-05-05", "intervention_type": "Excel Advanced",
+          "funding_type": "External", "cost": "2000"}, token_from="/wsp/training-log")
+    eid = query(app_module, "SELECT id FROM training_events WHERE intervention_type='Excel Advanced'")[0][0]
+    admin_client.post("/wsp/training-log/%d/document" % eid,
+                      data={"_csrf": csrf(admin_client, "/wsp/training-log"), "doc_type": "Invoice",
+                            "file": (io.BytesIO(b"%PDF-1.4\n%%EOF"), "invoice.pdf")},
+                      content_type="multipart/form-data")
+    html = admin_client.get("/wsp/documents").get_data(as_text=True)
+    assert "invoice.pdf" in html and "Excel Advanced" in html and "Invoice" in html
+    # filter by a type with no documents → the invoice is hidden
+    html2 = admin_client.get("/wsp/documents?doc_type=Certificate").get_data(as_text=True)
+    assert "invoice.pdf" not in html2

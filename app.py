@@ -2238,6 +2238,45 @@ def wsp_document_delete(doc_id):
     return redirect(request.referrer or url_for("wsp"))
 
 
+def _doc_source_label(db, entity_type, entity_id):
+    if entity_type == "training":
+        r = db.execute("SELECT intervention_type, training_date FROM training_events WHERE id=?", (entity_id,)).fetchone()
+        return ("Training — %s (%s)" % (r["intervention_type"], r["training_date"])) if r else "Training (removed)"
+    if entity_type == "bursary":
+        r = db.execute("SELECT student_name, year FROM bursary_awards WHERE id=?", (entity_id,)).fetchone()
+        return ("Bursary — %s (%s)" % (r["student_name"], r["year"])) if r else "Bursary (removed)"
+    if entity_type == "learnership":
+        r = db.execute("SELECT title FROM learnership_plans WHERE id=?", (entity_id,)).fetchone()
+        return ("Learnership — %s" % r["title"]) if r else "Learnership (removed)"
+    return entity_type.capitalize()
+
+
+@app.route("/wsp/documents")
+@login_required
+def wsp_documents_repo():
+    """Audit repository: every WSP supporting document in one filterable list."""
+    db = get_db()
+    dtype = request.values.get("doc_type")
+    etype = request.values.get("entity_type")
+    q = "SELECT * FROM wsp_documents"
+    conds, params = [], []
+    if dtype in WSP_DOC_TYPES:
+        conds.append("doc_type=?")
+        params.append(dtype)
+    if etype in ("training", "bursary", "learnership"):
+        conds.append("entity_type=?")
+        params.append(etype)
+    if conds:
+        q += " WHERE " + " AND ".join(conds)
+    q += " ORDER BY uploaded_at DESC, id DESC"
+    rows = db.execute(q, params).fetchall()
+    names = {u["id"]: (u["full_name"] or u["username"]) for u in db.execute("SELECT id, username, full_name FROM users").fetchall()}
+    docs = [{"d": d, "source": _doc_source_label(db, d["entity_type"], d["entity_id"]),
+             "by": names.get(d["uploaded_by"], "—")} for d in rows]
+    return render_template("wsp_documents.html", docs=docs, doc_types=WSP_DOC_TYPES, dtype=dtype, etype=etype,
+                           total=len(rows))
+
+
 # ── Bursaries ──
 
 BURSARY_STATUSES = ["Awarded", "Active", "Completed", "Withdrawn", "Pending"]

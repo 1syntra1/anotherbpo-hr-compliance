@@ -12,4 +12,6 @@
       href="{{ url_for('wsp_learnerships') }}"><i class="bi bi-people me-1" aria-hidden="true"></i>Learnerships</a></li>
   <li class="nav-item"><a class="nav-link {% if 'bursar' in (request.endpoint or '') %}active{% endif %}"
       href="{{ url_for('wsp_bursaries') }}"><i class="bi bi-mortarboard-fill me-1" aria-hidden="true"></i>Bursaries</a></li>
+  <li class="nav-item"><a class="nav-link {% if 'documents' in (request.endpoint or '') %}active{% endif %}"
+      href="{{ url_for('wsp_documents_repo') }}"><i class="bi bi-folder2-open me-1" aria-hidden="true"></i>Documents</a></li>
 </ul>
