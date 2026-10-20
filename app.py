@@ -2238,6 +2238,52 @@ def wsp_document_delete(doc_id):
     return redirect(request.referrer or url_for("wsp"))
 
 
+@app.route("/wsp/dashboard")
+@login_required
+def wsp_dashboard():
+    """Year-at-a-glance WSP / ATR dashboard aggregating the operational trackers."""
+    db = get_db()
+    year = _int_or_none(request.values.get("year")) or date.today().year
+    yp = "%04d-%%" % year
+
+    def one(sql, params=()):
+        return db.execute(sql, params).fetchone()
+
+    te_planned = one("SELECT COUNT(*) c FROM training_events WHERE training_date LIKE ? AND status IN ('Planned','In Progress')", (yp,))["c"]
+    te_completed = one("SELECT COUNT(*) c FROM training_events WHERE training_date LIKE ? AND status='Completed'", (yp,))["c"]
+    te_spend = one("SELECT COALESCE(SUM(cost),0) s FROM training_events WHERE training_date LIKE ?", (yp,))["s"]
+    emp_trained = one("SELECT COUNT(DISTINCT employee_id) c FROM training_events WHERE training_date LIKE ? AND employee_id IS NOT NULL", (yp,))["c"]
+    attendances = one("SELECT COALESCE(SUM(COALESCE(num_attendees,1)),0) c FROM training_events WHERE training_date LIKE ?", (yp,))["c"]
+    skills_progs = one("SELECT COUNT(*) c FROM training_events WHERE training_date LIKE ? AND LOWER(COALESCE(category,'')) LIKE '%skills programme%'", (yp,))["c"]
+
+    def grant(t):
+        r = one("""SELECT COALESCE(SUM(amount_received),0) amt,
+                          SUM(CASE WHEN status='Received' THEN 1 ELSE 0 END) rec,
+                          COUNT(*) n FROM grants WHERE grant_type=? AND year=?""", (t, year))
+        return {"amount": r["amt"], "received_quarters": r["rec"] or 0, "rows": r["n"] or 0}
+    mandatory = grant("Mandatory")
+    discretionary = grant("Discretionary")
+
+    learn = one("SELECT COUNT(*) c, COALESCE(SUM(target_count),0) t FROM learnership_plans WHERE year=? AND programme_type='Learnership'", (year,))
+    intern = one("SELECT COUNT(*) c, COALESCE(SUM(target_count),0) t FROM learnership_plans WHERE year=? AND programme_type='Internship'", (year,))
+
+    cfg = one("SELECT budget_total, target_count FROM bursary_budgets WHERE year=?", (year,))
+    bud_total = cfg["budget_total"] if cfg else DEFAULT_BURSARY_BUDGET
+    bud_target = cfg["target_count"] if cfg else DEFAULT_BURSARY_COUNT
+    bur = one("SELECT COUNT(*) c, COALESCE(SUM(amount_awarded),0) a FROM bursary_awards WHERE year=?", (year,))
+
+    sdl = one("SELECT COALESCE(SUM(sdl_payable),0) payable, COALESCE(SUM(sdl_paid),0) paid FROM sdl_tracker WHERE period_month LIKE ?", (yp,))
+
+    return render_template(
+        "wsp_dashboard.html", year=year, years=_tracker_years(),
+        te_planned=te_planned, te_completed=te_completed, te_spend=te_spend,
+        emp_trained=emp_trained, attendances=attendances, skills_progs=skills_progs,
+        mandatory=mandatory, discretionary=discretionary,
+        learn_count=learn["c"], learn_target=learn["t"], intern_count=intern["c"], intern_target=intern["t"],
+        bud_total=bud_total, bud_target=bud_target, bur_count=bur["c"], bur_awarded=bur["a"],
+        bur_remaining=bud_total - bur["a"], sdl_payable=sdl["payable"], sdl_paid=sdl["paid"])
+
+
 def _doc_source_label(db, entity_type, entity_id):
     if entity_type == "training":
         r = db.execute("SELECT intervention_type, training_date FROM training_events WHERE id=?", (entity_id,)).fetchone()

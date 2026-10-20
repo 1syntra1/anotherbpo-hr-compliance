@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}WSP / ATR Dashboard{% endblock %}
+{% block page_title %}WSP &amp; ATR Dashboard{% endblock %}
+
+{% macro stat(label, value, sub="") %}
+<div class="col-6 col-md-3">
+  <div class="card border-0 shadow-sm h-100"><div class="card-body py-3">
+    <div class="text-muted small">{{ label }}</div>
+    <div class="fs-4 fw-bold text-navy">{{ value }}</div>
+    {% if sub %}<div class="small text-muted">{{ sub }}</div>{% endif %}
+  </div></div>
+</div>
+{% endmacro %}
+
+{% block content %}
+{% include "_wsp_nav.html" %}
+
+<div class="d-flex align-items-center gap-2 mb-3">
+  <form method="GET" action="{{ url_for('wsp_dashboard') }}" class="d-flex align-items-center gap-2">
+    <label for="year" class="form-label small fw-semibold mb-0">Year</label>
+    <select id="year" name="year" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+
+<div class="row g-3 mb-2">
+  {{ stat("Interventions planned", te_planned) }}
+  {{ stat("Interventions completed", te_completed) }}
+  {{ stat("Employees trained", emp_trained, "%s total attendances"|format(attendances)) }}
+  {{ stat("Skills programmes", skills_progs) }}
+</div>
+<div class="row g-3 mb-2">
+  {{ stat("Training spend (actual)", "R {:,.0f}".format(te_spend)) }}
+  {{ stat("SDL paid to date", "R {:,.0f}".format(sdl_paid), "of R {:,.0f} payable".format(sdl_payable)) }}
+  {{ stat("Learnerships", learn_count, "%s learners targeted"|format(learn_target)) }}
+  {{ stat("Internships", intern_count, "%s targeted"|format(intern_target)) }}
+</div>
+
+<div class="row g-4 mt-1">
+  <div class="col-lg-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-gift me-2 text-teal" aria-hidden="true"></i>Grant status</div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between"><span>Mandatory grant received</span><span class="fw-semibold">R {{ '{:,.2f}'.format(mandatory.amount) }}</span></div>
+        <div class="small text-muted mb-2">{{ mandatory.received_quarters }} of 4 quarters marked received</div>
+        <div class="d-flex justify-content-between"><span>Discretionary grant received</span><span class="fw-semibold">R {{ '{:,.2f}'.format(discretionary.amount) }}</span></div>
+        <div class="small text-muted">{{ 'Not yet tracked' if discretionary.rows == 0 else '%s record(s)'|format(discretionary.rows) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-mortarboard-fill me-2 text-teal" aria-hidden="true"></i>Bursaries</div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between"><span>Awarded</span><span class="fw-semibold">{{ bur_count }} / {{ bud_target }}</span></div>
+        <div class="d-flex justify-content-between"><span>Budget</span><span class="fw-semibold">R {{ '{:,.2f}'.format(bud_total) }}</span></div>
+        <div class="d-flex justify-content-between"><span>Awarded value</span><span class="fw-semibold">R {{ '{:,.2f}'.format(bur_awarded) }}</span></div>
+        <div class="d-flex justify-content-between"><span>Remaining</span><span class="fw-semibold {{ 'text-danger' if bur_remaining < 0 else 'text-success' }}">R {{ '{:,.2f}'.format(bur_remaining) }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="small text-muted mt-3"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Planned vs completed, spend, trained headcount, SDL paid, learnerships, internships, bursaries, skills programmes and grant status for {{ year }}. Figures come from the monthly training log and the trackers.</p>
+{% endblock %}

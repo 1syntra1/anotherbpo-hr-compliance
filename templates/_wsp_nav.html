@@ -1,5 +1,7 @@
 {# Sub-navigation for the WSP / Skills Development module. #}
 <ul class="nav nav-pills gap-2 mb-4 flex-wrap" style="font-size:.85rem;">
+  <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp_dashboard' %}active{% endif %}"
+      href="{{ url_for('wsp_dashboard') }}"><i class="bi bi-speedometer2 me-1" aria-hidden="true"></i>Dashboard</a></li>
   <li class="nav-item"><a class="nav-link {% if request.endpoint == 'wsp' %}active{% endif %}"
       href="{{ url_for('wsp') }}"><i class="bi bi-mortarboard me-1" aria-hidden="true"></i>WSP / ATR</a></li>
   <li class="nav-item"><a class="nav-link {% if 'training_log' in (request.endpoint or '') or 'training_event' in (request.endpoint or '') %}active{% endif %}"

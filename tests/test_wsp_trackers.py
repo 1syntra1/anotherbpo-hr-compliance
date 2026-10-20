@@ -150,3 +150,19 @@ def test_document_repository_lists_uploads(admin_client, app_module):
     # filter by a type with no documents → the invoice is hidden
     html2 = admin_client.get("/wsp/documents?doc_type=Certificate").get_data(as_text=True)
     assert "invoice.pdf" not in html2
+
+
+def test_wsp_dashboard_aggregates(admin_client):
+    # seed one completed external training event + a bursary, then load the dashboard
+    post(admin_client, "/wsp/training-log/add",
+         {"year": "2026", "month": "6", "training_date": "2026-06-01", "intervention_type": "SHE Rep",
+          "funding_type": "External", "cost": "3000", "num_attendees": "5", "status": "Completed"},
+         token_from="/wsp/training-log")
+    post(admin_client, "/wsp/bursaries/award?year=2026",
+         {"year": "2026", "student_name": "Dash Dashboard", "amount_awarded": "15000"}, token_from="/wsp/bursaries")
+    r = admin_client.get("/wsp/dashboard?year=2026")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert "Interventions completed" in html and "Bursaries" in html
+    assert "3,000" in html          # training spend
+    assert "35,000.00" in html      # bursary remaining = 50000 - 15000
