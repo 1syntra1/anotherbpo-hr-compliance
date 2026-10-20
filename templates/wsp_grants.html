@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Mandatory Grant Tracker{% endblock %}
+{% block page_title %}Mandatory Grant Tracker{% endblock %}
+
+{% block content %}
+{% include "_wsp_nav.html" %}
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <form method="GET" action="{{ url_for('wsp_grants') }}" class="d-flex align-items-center gap-2">
+    <label for="year" class="form-label small fw-semibold mb-0">Year</label>
+    <select id="year" name="year" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+  </form>
+  <span class="text-muted small ms-auto">MICT SETA mandatory grant — record receipt per quarter to verify the full grant is received.</span>
+</div>
+
+<form method="POST" action="{{ url_for('wsp_grants') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="year" value="{{ year }}">
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0" style="font-size:.85rem;">
+        <caption class="visually-hidden">Mandatory grant tracker for {{ year }}</caption>
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3" scope="col">Quarter</th>
+            <th scope="col" class="text-end">Amount received (R)</th>
+            <th scope="col">Date received</th>
+            <th scope="col">Status</th>
+            <th scope="col">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q, row in quarters %}
+          <tr>
+            <td class="ps-3 fw-semibold">{{ q }}</td>
+            <td><input class="form-control form-control-sm text-end" name="amount_{{ q }}" inputmode="decimal"
+                       value="{{ '%.2f'|format(row.amount_received) if row and row.amount_received is not none else '' }}"
+                       aria-label="Amount received {{ q }}"></td>
+            <td><input type="date" class="form-control form-control-sm" name="date_{{ q }}"
+                       value="{{ row.date_received if row and row.date_received else '' }}" aria-label="Date received {{ q }}"></td>
+            <td>
+              <select class="form-select form-select-sm" name="status_{{ q }}" aria-label="Status {{ q }}">
+                {% for s in statuses %}<option {{ 'selected' if row and row.status == s else ('selected' if not row and s == 'Pending') }}>{{ s }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input class="form-control form-control-sm" name="notes_{{ q }}" maxlength="300"
+                       value="{{ row.notes if row and row.notes else '' }}" aria-label="Notes {{ q }}"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot class="table-light fw-semibold">
+          <tr><td class="ps-3">Total {{ year }}</td><td class="text-end">{{ '{:,.2f}'.format(total) }}</td><td colspan="3"></td></tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-end">
+      <button class="btn btn-teal btn-sm px-4">Save {{ year }}</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

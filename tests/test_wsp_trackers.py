@@ -25,3 +25,16 @@ def test_sdl_rejects_bad_amount(admin_client, app_module):
          {"year": "2026", "payable_5": "-10"}, token_from="/wsp/sdl")
     rows = query(app_module, "SELECT COUNT(*) FROM sdl_tracker WHERE period_month='2026-05'")
     assert rows[0][0] == 0  # nothing saved when validation fails
+
+
+def test_grants_page_loads(admin_client):
+    r = admin_client.get("/wsp/grants?year=2026")
+    assert r.status_code == 200 and b"Q1" in r.data
+
+
+def test_grants_save(admin_client, app_module):
+    post(admin_client, "/wsp/grants?year=2026",
+         {"year": "2026", "amount_Q2": "25000", "date_Q2": "2026-08-01", "status_Q2": "Received"},
+         token_from="/wsp/grants")
+    rows = query(app_module, "SELECT amount_received, status FROM grants WHERE year=2026 AND quarter='Q2' AND grant_type='Mandatory'")
+    assert [tuple(r) for r in rows] == [(25000.0, "Received")]

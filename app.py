@@ -2097,6 +2097,64 @@ def wsp_sdl():
                            tot_payable=tot_payable, tot_paid=tot_paid)
 
 
+QUARTERS = ["Q1", "Q2", "Q3", "Q4"]
+GRANT_STATUSES = ["Pending", "Received", "Partially received", "Not received", "Queried"]
+
+
+@app.route("/wsp/grants", methods=["GET", "POST"])
+@login_required
+def wsp_grants():
+    """Mandatory grant tracker — one row per quarter, saved per year."""
+    db = get_db()
+    year = _int_or_none(request.values.get("year")) or date.today().year
+    gtype = "Mandatory"
+    if request.method == "POST":
+        errors = []
+        pending = []
+        for q in QUARTERS:
+            amount, e = _money_or_none(request.form.get("amount_%s" % q), "%s amount" % q)
+            if e:
+                errors.append(e)
+            ddate = (request.form.get("date_%s" % q) or "").strip() or None
+            if ddate:
+                try:
+                    date.fromisoformat(ddate)
+                except ValueError:
+                    errors.append("%s date received is invalid." % q)
+                    ddate = None
+            status = request.form.get("status_%s" % q, "Pending")
+            if status not in GRANT_STATUSES:
+                status = "Pending"
+            notes = (request.form.get("notes_%s" % q) or "").strip()[:300] or None
+            pending.append((q, amount, ddate, status, notes))
+        if errors:
+            for e in errors[:8]:
+                flash(e, "danger")
+            return redirect(url_for("wsp_grants", year=year))
+        for q, amount, ddate, status, notes in pending:
+            exists = db.execute("SELECT id FROM grants WHERE grant_type=? AND year=? AND quarter=?",
+                                (gtype, year, q)).fetchone()
+            if exists:
+                db.execute("""UPDATE grants SET amount_received=?, date_received=?, status=?, notes=?,
+                              updated_at=datetime('now'), updated_by=? WHERE id=?""",
+                           (amount, ddate, status, notes, g.user["id"], exists["id"]))
+            elif amount is not None or ddate or status != "Pending" or notes:
+                db.execute("""INSERT INTO grants (grant_type, year, quarter, amount_received, date_received,
+                              status, notes, updated_by) VALUES (?,?,?,?,?,?,?,?)""",
+                           (gtype, year, q, amount, ddate, status, notes, g.user["id"]))
+        log_action("grant_update", "wsp", "Updated mandatory grant tracker for %d" % year, commit=False)
+        db.commit()
+        flash("Mandatory grant tracker saved for %d." % year, "success")
+        return redirect(url_for("wsp_grants", year=year))
+
+    stored = {r["quarter"]: r for r in db.execute(
+        "SELECT * FROM grants WHERE grant_type=? AND year=?", (gtype, year)).fetchall()}
+    quarters = [(q, stored.get(q)) for q in QUARTERS]
+    total = sum((r["amount_received"] or 0) for r in stored.values())
+    return render_template("wsp_grants.html", year=year, quarters=quarters, years=_tracker_years(),
+                           statuses=GRANT_STATUSES, total=total)
+
+
 # ─── B-BBEE ──────────────────────────────────────────────────────────────────
 
 @app.route("/bbbee")

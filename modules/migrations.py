@@ -569,12 +569,34 @@ def m005_sdl_tracker(db):
     """)
 
 
+# ─── 6. WSP: SETA grant tracker (mandatory + discretionary) ──────────────────
+
+def m006_grants(db):
+    _script(db, """
+        CREATE TABLE grants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            grant_type TEXT NOT NULL DEFAULT 'Mandatory',   -- Mandatory | Discretionary
+            year INTEGER NOT NULL,
+            quarter TEXT NOT NULL,                            -- Q1..Q4
+            amount_received REAL,
+            date_received TEXT,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            notes TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(grant_type, year, quarter)
+        );
+        CREATE INDEX ix_grants_year ON grants(grant_type, year);
+    """)
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
     (3, "compliance records, workflow, report versions, evidence, rules", m003_compliance_records),
     (4, "Dash BPO: MICT SETA + SDL number", m004_mict_seta_sdl),
     (5, "WSP: monthly SDL/EMP201 tracker", m005_sdl_tracker),
+    (6, "WSP: SETA grant tracker", m006_grants),
 ]
 
 
