@@ -5,7 +5,8 @@
      {{ render_checklist('gbs', checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks) }}
 ════════════════════════════════════════════════════════════════ #}
 
-{% macro render_checklist(module, checklist, states, done, total, pct, custom_tasks={}, hidden_tasks=set()) %}
+{% macro render_checklist(module, checklist, states, done, total, pct, custom_tasks={}, hidden_tasks=set(), locked=False) %}
+{% set dom = module|replace(':', '-') %}
 <div class="checklist-wrap" data-module="{{ module }}" data-total="{{ total }}">
 
   <!-- Header + overall progress -->
@@ -24,8 +25,11 @@
             <i class="bi bi-clock-history me-1"></i>{{ checklist.deadline }}
           </span><br/>
           {% endif %}
+          {% if locked %}
+          <span class="badge bg-secondary"><i class="bi bi-lock-fill me-1"></i>Frozen at submission</span>
+          {% else %}
           <form method="POST" action="{{ url_for('checklist_reset', module=module) }}"
-                onsubmit="return confirm('Reset all checklist progress for this module?');" class="d-inline">
+                onsubmit="return confirm('Reset all checklist progress for this module?');" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-link btn-sm text-muted p-0" style="font-size:.78rem;">
               <i class="bi bi-arrow-counterclockwise me-1"></i>Reset checklist
             </button>
@@ -33,11 +37,12 @@
           {% if hidden_tasks %}
           <br/>
           <form method="POST" action="{{ url_for('checklist_restore_defaults', module=module) }}"
-                onsubmit="return confirm('Restore all hidden default tasks?');" class="d-inline">
+                onsubmit="return confirm('Restore all hidden default tasks?');" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-link btn-sm text-teal p-0" style="font-size:.78rem;">
               <i class="bi bi-arrow-up-circle me-1"></i>Restore {{ hidden_tasks|length }} hidden default{% if hidden_tasks|length != 1 %}s{% endif %}
             </button>
           </form>
+          {% endif %}
           {% endif %}
         </div>
       </div>
@@ -76,17 +81,17 @@
   <!-- Expand / collapse all -->
   <div class="d-flex justify-content-end gap-2 mb-2">
     <button type="button" class="btn btn-sm btn-outline-secondary checklist-expand-all"
-            data-target="#checklist-{{ module }}">
+            data-target="#checklist-{{ dom }}">
       <i class="bi bi-arrows-expand me-1"></i>Expand all
     </button>
     <button type="button" class="btn btn-sm btn-outline-secondary checklist-collapse-all"
-            data-target="#checklist-{{ module }}">
+            data-target="#checklist-{{ dom }}">
       <i class="bi bi-arrows-collapse me-1"></i>Collapse all
     </button>
   </div>
 
   <!-- Steps accordion (panels open independently) -->
-  <div class="accordion checklist-accordion" id="checklist-{{ module }}">
+  <div class="accordion checklist-accordion" id="checklist-{{ dom }}">
     {% for step in checklist.steps %}
       {% set step_items_visible = step['items'] | rejectattr('key', 'in', hidden_tasks) | list %}
       {% set step_custom = custom_tasks.get(step.key, []) %}
@@ -106,7 +111,7 @@
         <h2 class="accordion-header">
           <button class="accordion-button {% if not loop.first %}collapsed{% endif %} checklist-step-header"
                   type="button" data-bs-toggle="collapse"
-                  data-bs-target="#step-{{ module }}-{{ step.key }}">
+                  data-bs-target="#step-{{ dom }}-{{ step.key }}">
             <span class="step-check-icon me-2">
               <i class="bi {% if step_complete %}bi-check-circle-fill text-success{% else %}bi-circle text-muted{% endif %}"></i>
             </span>
@@ -121,7 +126,7 @@
             </span>
           </button>
         </h2>
-        <div id="step-{{ module }}-{{ step.key }}"
+        <div id="step-{{ dom }}-{{ step.key }}"
              class="accordion-collapse collapse {% if loop.first %}show{% endif %}">
           <div class="accordion-body">
 
@@ -137,20 +142,22 @@
               {% set checked = states.get(item.key) %}
               <div class="form-check checklist-item-row default-task-row d-flex align-items-start gap-2 py-1">
                 <input class="form-check-input checklist-checkbox mt-1" type="checkbox"
-                       id="cl-{{ module }}-{{ item.key }}"
+                       id="cl-{{ dom }}-{{ item.key }}"
                        data-module="{{ module }}"
                        data-item="{{ item.key }}"
                        data-step="{{ step.key }}"
-                       {% if checked %}checked{% endif %}>
+                       {% if checked %}checked{% endif %}{% if locked %} disabled{% endif %}>
                 <label class="form-check-label small flex-grow-1 {% if checked %}text-decoration-line-through text-muted{% endif %}"
-                       for="cl-{{ module }}-{{ item.key }}">
+                       for="cl-{{ dom }}-{{ item.key }}">
                   {{ item.text }}
                 </label>
+                {% if not locked %}
                 <button type="button" class="btn btn-link btn-sm text-muted p-0 hide-task-btn opacity-50"
                         data-item-key="{{ item.key }}" data-module="{{ module }}" data-step="{{ step.key }}"
                         title="Remove this task from this project">
                   <i class="bi bi-x-lg" style="font-size:.85rem;"></i>
                 </button>
+                {% endif %}
               </div>
               {% endfor %}
 
@@ -160,26 +167,29 @@
               <div class="form-check checklist-item-row custom-task-row d-flex align-items-start gap-2 py-1"
                    data-task-id="{{ ct.id }}">
                 <input class="form-check-input checklist-checkbox mt-1" type="checkbox"
-                       id="cl-{{ module }}-{{ ct.key }}"
+                       id="cl-{{ dom }}-{{ ct.key }}"
                        data-module="{{ module }}"
                        data-item="{{ ct.key }}"
                        data-step="{{ step.key }}"
-                       {% if checked %}checked{% endif %}>
+                       {% if checked %}checked{% endif %}{% if locked %} disabled{% endif %}>
                 <label class="form-check-label small flex-grow-1 {% if checked %}text-decoration-line-through text-muted{% endif %}"
-                       for="cl-{{ module }}-{{ ct.key }}">
+                       for="cl-{{ dom }}-{{ ct.key }}">
                   {{ ct.text }}
                   <span class="badge bg-light text-secondary border ms-1" style="font-size:.6rem;">custom</span>
                 </label>
+                {% if not locked %}
                 <button type="button" class="btn btn-link btn-sm text-danger p-0 delete-task-btn"
                         data-task-id="{{ ct.id }}" data-module="{{ module }}" data-step="{{ step.key }}"
                         title="Delete this task">
                   <i class="bi bi-trash"></i>
                 </button>
+                {% endif %}
               </div>
               {% endfor %}
             </div>
 
             {# ── Add a new task to this step ── #}
+            {% if not locked %}
             <div class="add-task-form mt-2 pt-2 border-top">
               <div class="input-group input-group-sm">
                 <span class="input-group-text bg-light"><i class="bi bi-plus-lg"></i></span>
@@ -192,6 +202,7 @@
                 </button>
               </div>
             </div>
+            {% endif %}
 
             {# ── References / more info for this step ── #}
             {% if step.references %}

@@ -1,216 +1,88 @@
 {% extends "base.html" %}
-{% from "_checklist.html" import render_checklist %}
+{% from "_period_picker.html" import period_picker with context %}
+{% from "_checklist.html" import render_checklist with context %}
 {% block title %}Employment Equity{% endblock %}
 {% block page_title %}Employment Equity (EEA2 &amp; EEA4){% endblock %}
 
 {% block content %}
+{{ period_picker(records, sel, status_labels, 'ee', 'ee') }}
 
-<!-- Tabs -->
-<ul class="nav nav-pills mb-4 gap-2" id="eeTabs" role="tablist">
-  <li class="nav-item" role="presentation">
-    <button class="nav-link active" id="tab-data-btn" data-bs-toggle="pill"
-            data-bs-target="#tab-data" type="button" role="tab">
-      <i class="bi bi-grid-3x3-gap me-1"></i>Workforce &amp; Reports
-    </button>
-  </li>
-  <li class="nav-item" role="presentation">
-    <button class="nav-link" id="tab-checklist-btn" data-bs-toggle="pill"
-            data-bs-target="#tab-checklist" type="button" role="tab">
-      <i class="bi bi-list-check me-1"></i>Compliance Checklist
-      <span class="badge bg-white text-dark ms-1">{{ cl_done }}/{{ cl_total }}</span>
-    </button>
-  </li>
-</ul>
+{% if not company_info.company_name %}
+<div class="alert alert-warning small"><i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>The company profile is empty. <a href="{{ url_for('company') }}">Complete it</a> — employer details, sector and designated-employer status feed the EE reports.</div>
+{% endif %}
 
-<div class="tab-content">
-
-<!-- ═══ TAB 1: Workforce & Reports ═══ -->
-<div class="tab-pane fade show active" id="tab-data" role="tabpanel">
+{% if sel and analysis %}
 <div class="row g-4">
-
-  <!-- Company Info form -->
-  <div class="col-lg-4">
+  <div class="col-xl-8">
     <div class="card border-0 shadow-sm mb-4">
       <div class="card-header bg-white border-bottom fw-semibold py-3">
-        <i class="bi bi-building me-2 text-primary"></i>Company / Employer Details
-      </div>
-      <div class="card-body">
-        <form method="POST" action="{{ url_for('ee') }}">
-          <div class="mb-2">
-            <label class="form-label form-label-sm fw-semibold">Company Name</label>
-            <input type="text" name="company_name" class="form-control form-control-sm"
-                   value="{{ company_info.company_name if company_info else '' }}">
-          </div>
-          <div class="mb-2">
-            <label class="form-label form-label-sm fw-semibold">Registration Number</label>
-            <input type="text" name="reg_number" class="form-control form-control-sm"
-                   value="{{ company_info.reg_number if company_info else '' }}"
-                   placeholder="2020/123456/07">
-          </div>
-          <div class="mb-2">
-            <label class="form-label form-label-sm fw-semibold">Reporting Year</label>
-            <input type="text" name="reporting_year" class="form-control form-control-sm"
-                   value="{{ company_info.reporting_year if company_info else '' }}"
-                   placeholder="2025">
-          </div>
-          <div class="mb-3">
-            <label class="form-label form-label-sm fw-semibold">Designated Employer?</label>
-            <select name="designated_employer" class="form-select form-select-sm">
-              <option value="Yes" {% if company_info and company_info.designated_employer == 'Yes' %}selected{% endif %}>Yes</option>
-              <option value="No" {% if company_info and company_info.designated_employer == 'No' %}selected{% endif %}>No</option>
-            </select>
-            <small class="text-muted">≥50 employees OR payroll ≥R500k</small>
-          </div>
-          <button type="submit" class="btn btn-primary btn-sm w-100">
-            <i class="bi bi-save me-1"></i>Save Info
-          </button>
-        </form>
-      </div>
-    </div>
-
-    <!-- Disability summary -->
-    <div class="card border-0 shadow-sm mb-4">
-      <div class="card-body text-center py-4">
-        <div class="fs-1 fw-bold text-info">{{ disability_count }}</div>
-        <div class="text-muted">Employees with Disabilities</div>
-        <small class="text-muted">EE target: ≥2% of workforce</small>
-        <div class="mt-2">
-          {% if total_employees > 0 %}
-            {% set pct = (disability_count / total_employees * 100)|round(1) %}
-            <div class="progress" style="height:8px">
-              <div class="progress-bar {% if pct >= 2 %}bg-success{% else %}bg-warning{% endif %}"
-                   style="width:{{ [pct, 100]|min }}%"></div>
-            </div>
-            <small class="text-muted">{{ pct }}% of {{ total_employees }} employees</small>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-
-    <!-- Generate buttons -->
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-bottom fw-semibold py-3">
-        <i class="bi bi-file-earmark-spreadsheet me-2 text-success"></i>Generate Reports
-      </div>
-      <div class="card-body d-grid gap-2">
-        <form method="POST" action="{{ url_for('ee_generate') }}">
-          <input type="hidden" name="report_type" value="eea2">
-          <button type="submit" class="btn btn-success w-100">
-            <i class="bi bi-download me-2"></i>Download EEA2 Report (.xlsx)
-          </button>
-        </form>
-        <form method="POST" action="{{ url_for('ee_generate') }}">
-          <input type="hidden" name="report_type" value="eea4">
-          <button type="submit" class="btn btn-outline-success w-100">
-            <i class="bi bi-download me-2"></i>Download EEA4 Report (.xlsx)
-          </button>
-        </form>
-        <small class="text-muted text-center">
-          Submittable to the DoEL EE Online system
-        </small>
-      </div>
-    </div>
-  </div>
-
-  <!-- EE Matrix -->
-  <div class="col-lg-8">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
-        <span class="fw-semibold">
-          <i class="bi bi-grid-3x3-gap me-2 text-primary"></i>
-          EE Workforce Matrix — Occupational Levels × Race/Gender
-        </span>
-        <span class="badge bg-secondary">{{ total_employees }} total</span>
+        <i class="bi bi-grid-3x3-gap me-2 text-teal" aria-hidden="true"></i>Workforce profile at {{ sel.period_end or 'period end' }} (live preview)
       </div>
       <div class="card-body p-0">
+        {% if matrix %}
         <div class="table-responsive">
-          <table class="table table-bordered table-sm ee-matrix mb-0 small">
-            <thead>
-              <tr class="table-dark text-center">
-                <th rowspan="2" class="align-middle" style="min-width:150px">Occupational Level</th>
-                <th colspan="2" class="text-center">African</th>
-                <th colspan="2" class="text-center">Coloured</th>
-                <th colspan="2" class="text-center">Indian</th>
-                <th colspan="2" class="text-center">White</th>
-                <th colspan="2" class="text-center">Foreign Nat.</th>
-                <th colspan="2" class="text-center table-primary">Total</th>
-              </tr>
-              <tr class="table-secondary text-center">
-                {% for _ in range(5) %}
-                <th>M</th><th>F</th>
-                {% endfor %}
-                <th class="table-primary">M</th>
-                <th class="table-primary">F</th>
-              </tr>
-            </thead>
+          <table class="table table-sm table-bordered text-center align-middle mb-0" style="font-size:.8rem;">
+            <caption class="small px-3">Permanent and temporary employees employed on the last day of the period. Live data — the stored report versions on the record are what count.</caption>
+            <thead class="table-light"><tr><th scope="col" class="text-start">Level</th>
+              {% for grp, gnd in matrix.columns %}<th scope="col">{{ 'Foreign' if grp == 'Foreign' else grp }} {{ gnd }}</th>{% endfor %}<th scope="col">Total</th></tr></thead>
             <tbody>
-              {% set races = ['African','Coloured','Indian','White','Foreign National'] %}
-              {% set grand_m = namespace(v=0) %}
-              {% set grand_f = namespace(v=0) %}
-              {% for lvl in occ_levels %}
-              {% set row_total_m = namespace(v=0) %}
-              {% set row_total_f = namespace(v=0) %}
-              <tr>
-                <td class="fw-semibold ps-2">{{ lvl }}</td>
-                {% for race in races %}
-                  {% set m = matrix[lvl][race]['M'] %}
-                  {% set f = matrix[lvl][race]['F'] %}
-                  {% set row_total_m.v = row_total_m.v + m %}
-                  {% set row_total_f.v = row_total_f.v + f %}
-                  <td class="text-center {% if m > 0 %}fw-semibold text-dark{% else %}text-muted{% endif %}">{{ m if m > 0 else '—' }}</td>
-                  <td class="text-center {% if f > 0 %}fw-semibold text-dark{% else %}text-muted{% endif %}">{{ f if f > 0 else '—' }}</td>
-                {% endfor %}
-                {% set grand_m.v = grand_m.v + row_total_m.v %}
-                {% set grand_f.v = grand_f.v + row_total_f.v %}
-                <td class="text-center fw-bold table-primary">{{ row_total_m.v }}</td>
-                <td class="text-center fw-bold table-primary">{{ row_total_f.v }}</td>
-              </tr>
+              {% for lvl, row in matrix.rows.items() %}
+              <tr><th scope="row" class="text-start fw-semibold">{{ lvl }}</th>
+                {% for c in matrix.columns %}<td>{{ row[c] }}</td>{% endfor %}<td class="fw-bold">{{ row.values()|sum }}</td></tr>
               {% endfor %}
             </tbody>
-            <tfoot>
-              <tr class="table-dark fw-bold text-center">
-                <td class="text-start ps-2">TOTAL</td>
-                {% for race in races %}
-                  {% set col_m = namespace(v=0) %}
-                  {% set col_f = namespace(v=0) %}
-                  {% for lvl in occ_levels %}
-                    {% set col_m.v = col_m.v + matrix[lvl][race]['M'] %}
-                    {% set col_f.v = col_f.v + matrix[lvl][race]['F'] %}
-                  {% endfor %}
-                  <td>{{ col_m.v }}</td>
-                  <td>{{ col_f.v }}</td>
-                {% endfor %}
-                <td class="table-primary">{{ grand_m.v }}</td>
-                <td class="table-primary">{{ grand_f.v }}</td>
-              </tr>
-            </tfoot>
           </table>
         </div>
+        {% else %}
+        <p class="p-3 mb-0 text-muted small">Set the period start and end dates on the record to see figures.</p>
+        {% endif %}
       </div>
     </div>
 
-    <!-- Legend -->
-    <div class="card border-0 shadow-sm mt-3">
-      <div class="card-body py-2 px-3">
-        <small class="text-muted">
-          <i class="bi bi-info-circle me-1"></i>
-          <strong>M</strong> = Male &nbsp;|&nbsp; <strong>F</strong> = Female &nbsp;|&nbsp;
-          Data drawn live from the Employee Register.
-          <strong>EEA2</strong> is the numerical workforce profile.
-          <strong>EEA4</strong> is the income differential statement.
-          Both must be submitted annually by <strong>15 January</strong> to the DoEL.
-        </small>
+    {% if checks %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-arrow-left-right me-2 text-teal" aria-hidden="true"></i>EEA2 / EEA4 reconciliation</div>
+      <ul class="list-group list-group-flush small">
+        {% for c in checks %}
+        <li class="list-group-item d-flex gap-2">
+          {% if c.ok %}<span class="badge bg-success-subtle text-success-emphasis border align-self-start">PASS</span>
+          {% else %}<span class="badge bg-danger-subtle text-danger-emphasis border align-self-start">RECONCILIATION ERROR</span>{% endif %}
+          <span>{{ c.check }} — expected {{ c.expected }}, got {{ c.actual }}{% if c.detail %}<br><span class="text-muted">{{ c.detail }}</span>{% endif %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-xl-4">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-clipboard-data me-2 text-teal" aria-hidden="true"></i>Population</div>
+      <div class="card-body small">
+        <div>Active employees in register: <strong>{{ total_active }}</strong></div>
+        <div>In EE population at period end: <strong>{{ analysis.population|length }}</strong></div>
+        <div>Hired in period: <strong>{{ analysis.hires|length }}</strong> · terminated in period: <strong>{{ analysis.terms|length }}</strong></div>
+        <div>Excluded by data errors: <strong class="{{ 'text-danger' if analysis.excluded }}">{{ analysis.excluded|length }}</strong></div>
       </div>
     </div>
-
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-exclamation-diamond me-2 text-teal" aria-hidden="true"></i>Data issues <span class="badge bg-secondary">{{ analysis.issues|length }}</span></div>
+      <ul class="list-group list-group-flush small" style="max-height:420px;overflow:auto;">
+        {% for i in analysis.issues %}
+        <li class="list-group-item"><span class="badge {{ 'bg-danger' if i.severity == 'error' else 'bg-warning text-dark' }}">{{ i.severity }}</span>
+          {% if i.employee %}<strong>{{ i.employee }}</strong>: {% endif %}{{ i.message }}</li>
+        {% else %}
+        <li class="list-group-item text-success"><i class="bi bi-check2-all me-1" aria-hidden="true"></i>No data issues.</li>
+        {% endfor %}
+      </ul>
+    </div>
   </div>
 </div>
-</div><!-- /tab-data -->
 
-<!-- ═══ TAB 2: Compliance Checklist ═══ -->
-<div class="tab-pane fade" id="tab-checklist" role="tabpanel">
-  {{ render_checklist('ee', checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks, hidden_tasks) }}
-</div>
-
-</div><!-- /tab-content -->
+{% if cl %}
+{{ render_checklist(cl.scope, cl.checklist, cl.states, cl.done, cl.total, cl.pct, cl.custom, cl.hidden, cl.locked) }}
+{% endif %}
+{% elif not sel %}
+<div class="text-center text-muted py-5">Open an Employment Equity reporting period to start.</div>
+{% endif %}
 {% endblock %}

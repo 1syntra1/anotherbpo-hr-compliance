@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }} — AnotherBPO HR Compliance</title>
+  <link href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet" />
+  <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet" />
+  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet" />
+</head>
+<body class="login-page d-flex align-items-center justify-content-center min-vh-100 py-4">
+  <main class="card border-0 shadow-sm p-4" style="max-width:520px;width:100%;">
+    <h1 class="h4 fw-bold text-navy mb-2">
+      <i class="bi bi-exclamation-triangle me-2" aria-hidden="true"></i>{{ title }}
+      <span class="text-muted fw-normal fs-6">(error {{ code }})</span>
+    </h1>
+    <p class="text-secondary mb-4">{{ message }}</p>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('dashboard') }}" class="btn btn-teal btn-sm">Go to dashboard</a>
+      <a href="javascript:history.back()" class="btn btn-light btn-sm">Go back</a>
+    </div>
+  </main>
+</body>
+</html>

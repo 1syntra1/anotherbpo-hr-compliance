@@ -1,0 +1,25 @@
+{# Period selector shared by module pages. Needs: records, sel, status_labels, endpoint, module_key #}
+{% macro period_picker(records, sel, status_labels, endpoint, module_key) %}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body d-flex flex-wrap align-items-center gap-3">
+    {% if records %}
+    <form method="GET" action="{{ url_for(endpoint) }}" class="d-flex align-items-center gap-2">
+      <label for="period" class="small fw-semibold mb-0">Reporting period</label>
+      <select id="period" name="record" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for r in records %}<option value="{{ r.id }}" {{ 'selected' if sel and sel.id == r.id }}>{{ r.period_label }} — {{ status_labels[r.status] }}</option>{% endfor %}
+      </select>
+      <noscript><button class="btn btn-sm btn-outline-secondary">Show</button></noscript>
+    </form>
+    {% if sel %}
+    <span class="small text-muted">{{ sel.period_start or '?' }} to {{ sel.period_end or '?' }} · due {{ sel.due_date or 'not set' }}</span>
+    <a href="{{ url_for('record_detail', record_id=sel.id) }}" class="btn btn-sm btn-teal ms-auto">
+      <i class="bi bi-folder-check me-1" aria-hidden="true"></i>Workflow, reports &amp; evidence</a>
+    {% endif %}
+    {% else %}
+    <span class="small text-muted">No reporting period yet.</span>
+    {% endif %}
+    <a href="{{ url_for('compliance_list', module=module_key) }}" class="btn btn-sm btn-outline-secondary {{ '' if records else 'ms-auto' }}">
+      <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>New period</a>
+  </div>
+</div>
+{% endmacro %}

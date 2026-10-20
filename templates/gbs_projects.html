@@ -182,7 +182,7 @@
 <!-- ═══ New Project Modal ═══ -->
 <div class="modal fade" id="newProjectModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
-    <form method="POST" action="{{ url_for('gbs_new') }}" class="modal-content border-0 shadow">
+    <form method="POST" action="{{ url_for('gbs_new') }}" class="modal-content border-0 shadow"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <div class="modal-header" style="background:var(--cb-navy);color:#fff;">
         <h5 class="modal-title">
           <i class="bi bi-plus-circle me-2"></i>New Quarterly Claim
@@ -216,12 +216,7 @@
                  value="{{ current_year }}" required>
         </div>
 
-        <div class="form-check small mb-0">
-          <input type="checkbox" name="force" id="force" class="form-check-input">
-          <label for="force" class="form-check-label text-muted">
-            Create anyway, even if a project for this quarter already exists (e.g. a re-submission)
-          </label>
-        </div>
+        
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>

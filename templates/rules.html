@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Rules Register{% endblock %}
+{% block page_title %}Regulatory Rules Register{% endblock %}
+
+{% block content %}
+<div class="alert alert-info small">
+  Every rate, threshold, scorecard weight and default deadline the system uses lives here, with its source.
+  Rule content never changes once saved: a regulatory change is entered as a <strong>new version</strong> with an
+  effective date, so reports generated under the old rules stay reproducible.
+  <strong>Unverified</strong> rules were entered by the developer from their understanding of the regulation and must be
+  checked by a named person against the official source.
+</div>
+
+{% for s in sets %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between gap-2">
+      <div>
+        <h2 class="h6 fw-bold text-navy mb-1">{{ s.code }} <span class="text-muted fw-normal">v{{ s.version }}</span>
+          {% if s.superseded_by %}<span class="badge bg-secondary">superseded</span>{% endif %}
+          {% if s.verified %}<span class="badge bg-success-subtle text-success-emphasis border"><i class="bi bi-patch-check-fill" aria-hidden="true"></i> verified {{ s.verified_at }} by {{ s.verified_by }}</span>
+          {% else %}<span class="badge bg-warning-subtle text-warning-emphasis border"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i> unverified</span>{% endif %}
+        </h2>
+        <div class="small">{{ s.regulator }} · effective from {{ s.effective_from }}{% if s.effective_to %} to {{ s.effective_to }}{% endif %} · used by {{ s.used }} report version{{ 's' if s.used != 1 }}</div>
+        <div class="small text-muted">{{ s.source_document }}{% if s.source_url %} · <a href="{{ s.source_url }}" target="_blank" rel="noopener noreferrer">source</a>{% endif %}</div>
+        <div class="small text-muted">Last reviewed: {{ s.last_reviewed or 'never' }} · next review: {{ s.next_review or 'not set' }}
+          {% if s.next_review and s.next_review < today %}<span class="badge bg-danger-subtle text-danger-emphasis border">review overdue</span>{% endif %}</div>
+        {% if s.notes %}<p class="small mt-2 mb-0">{{ s.notes }}</p>{% endif %}
+      </div>
+    </div>
+    <details class="mt-2"><summary class="small">Parameters</summary><pre class="small bg-light p-2 mt-2 mb-0" style="max-height:320px;overflow:auto;">{{ s.params_pretty }}</pre></details>
+    {% if is_admin %}
+    <details class="mt-2"><summary class="small">Record a review / verification</summary>
+      <form method="POST" action="{{ url_for('rules_review', rule_id=s.id) }}" class="row g-2 mt-1"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <div class="col-md-3"><label class="form-label small" for="lr{{ s.id }}">Last reviewed</label><input id="lr{{ s.id }}" type="date" name="last_reviewed" class="form-control form-control-sm" value="{{ s.last_reviewed or today }}"></div>
+        <div class="col-md-3"><label class="form-label small" for="nr{{ s.id }}">Next review</label><input id="nr{{ s.id }}" type="date" name="next_review" class="form-control form-control-sm" value="{{ s.next_review or '' }}"></div>
+        <div class="col-md-3"><label class="form-label small" for="va{{ s.id }}">Verified on</label><input id="va{{ s.id }}" type="date" name="verified_at" class="form-control form-control-sm" value="{{ s.verified_at or '' }}"></div>
+        <div class="col-md-3"><label class="form-label small" for="vb{{ s.id }}">Verified by (name)</label><input id="vb{{ s.id }}" name="verified_by" class="form-control form-control-sm" value="{{ s.verified_by or '' }}" maxlength="120"></div>
+        <div class="col-12"><label class="form-label small" for="nn{{ s.id }}">Notes</label><textarea id="nn{{ s.id }}" name="notes" rows="2" class="form-control form-control-sm">{{ s.notes or '' }}</textarea></div>
+        <div class="col-12"><button class="btn btn-sm btn-teal">Save review</button></div>
+      </form>
+    </details>
+    {% if not s.superseded_by %}
+    <details class="mt-2"><summary class="small">Add a new version (regulation changed)</summary>
+      <form method="POST" action="{{ url_for('rules_new_version', rule_id=s.id) }}" class="row g-2 mt-1"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <div class="col-md-3"><label class="form-label small" for="v{{ s.id }}">New version name</label><input id="v{{ s.id }}" name="version" class="form-control form-control-sm" required maxlength="30"></div>
+        <div class="col-md-3"><label class="form-label small" for="e{{ s.id }}">Effective from</label><input id="e{{ s.id }}" type="date" name="effective_from" class="form-control form-control-sm" required></div>
+        <div class="col-md-6"><label class="form-label small" for="sd{{ s.id }}">Source document</label><input id="sd{{ s.id }}" name="source_document" class="form-control form-control-sm" value="{{ s.source_document }}"></div>
+        <div class="col-12"><label class="form-label small" for="pj{{ s.id }}">Parameters (JSON)</label><textarea id="pj{{ s.id }}" name="params_json" rows="10" class="form-control form-control-sm font-monospace" required>{{ s.params_pretty }}</textarea></div>
+        <div class="col-12"><label class="form-label small" for="vn{{ s.id }}">What changed and why</label><textarea id="vn{{ s.id }}" name="notes" rows="2" class="form-control form-control-sm" required></textarea></div>
+        <div class="col-12"><button class="btn btn-sm btn-outline-secondary" onclick="return confirm('Add this as a new rule-set version?');">Add version</button></div>
+      </form>
+    </details>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

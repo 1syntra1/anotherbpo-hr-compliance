@@ -1,345 +1,284 @@
-"""BBBEE scorecard calculation and report generation."""
+"""B-BBEE internal calculation engine.
+
+Inputs are achieved points per element (and per priority sub-element), as worked
+out from the company's own scorecard workings. The engine applies the rule set:
+caps each element at max + bonus, checks priority-element sub-minimums, applies
+discounting, determines the level from the thresholds, and applies the automatic
+levels for black-owned EMEs/QSEs.
+
+Output is an INTERNAL calculation. It is not a B-BBEE certificate or affidavit and
+never says so.
+"""
 import io
 from datetime import datetime
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
+from decimal import Decimal, ROUND_HALF_UP
+
+from modules.xlsx_common import (data_row, header_row, new_workbook, report_meta, save, title_block,
+                                 warning_row, widths)
 
 try:
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-    )
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     RL_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover
     RL_AVAILABLE = False
 
-NAVY = "1A2744"
-LIGHT_BLUE = "D9E8F5"
-HEADER_BLUE = "2D9CDB"
-WHITE = "FFFFFF"
-GREY = "F2F2F2"
-
-# BBBEE Level thresholds (Generic 109-point scorecard)
-GENERIC_THRESHOLDS = [
-    (100, 1), (95, 2), (90, 3), (80, 4), (75, 5), (65, 6), (55, 7), (0, 8)
-]
-
-# QSE thresholds (100-point)
-QSE_THRESHOLDS = [
-    (100, 1), (90, 2), (80, 3), (70, 4), (60, 5), (50, 6), (40, 7), (0, 8)
-]
-
-LEVEL_COLOURS = {
-    1: "#006400",  # Dark green
-    2: "#228B22",
-    3: "#32CD32",
-    4: "#9ACD32",
-    5: "#FFD700",
-    6: "#FFA500",
-    7: "#FF6347",
-    8: "#FF0000",  # Red
-}
-
-LEVEL_RECOGNITION = {
-    1: "135%", 2: "125%", 3: "110%", 4: "100%",
-    5: "80%", 6: "60%", 7: "50%", 8: "10%",
-    "Non-Compliant": "0%",
-}
+TWO = Decimal("0.01")
+SCORECARD_CODES = {"GENERIC": "BBBEE-GENERIC-AMENDED", "QSE": "BBBEE-QSE-AMENDED", "EME": "BBBEE-EME-AMENDED"}
 
 
-def calculate_level(scorecard_type: str, total_score: float, black_owned_percent: float = 0) -> tuple:
-    """Return (level, recognition_percentage) for a given scorecard and score."""
+class InputError(ValueError):
+    pass
+
+
+def d(x):
+    try:
+        v = Decimal(str(x if x not in (None, "") else 0))
+    except Exception:
+        raise InputError("'%s' is not a number." % x)
+    if v != v or v.is_infinite():
+        raise InputError("Invalid number.")
+    return v
+
+
+def classify(turnover, params):
+    t = d(turnover)
+    if t <= d(params.get("turnover_max_eme", 10000000)):
+        return "EME"
+    if t <= d(params.get("turnover_max_qse", 50000000)):
+        return "QSE"
+    return "GENERIC"
+
+
+def level_for_points(points, thresholds):
+    for minimum, level in thresholds:
+        if points >= d(minimum):
+            return level
+    return "NC"
+
+
+def _auto_level(black_owned, table):
+    for minimum, level in table:
+        if black_owned >= d(minimum):
+            return level
+    return None
+
+
+def calculate(scorecard_type, params, inputs, black_owned_pct=0):
+    """Return a full explanation dict. `inputs` maps element keys and sub-minimum keys
+    to achieved points (bonus points under '<element>_bonus')."""
     stype = scorecard_type.upper()
+    bo = d(black_owned_pct)
+    if bo < 0 or bo > 100:
+        raise InputError("Black ownership must be between 0 and 100%.")
+    result = {"scorecard": stype, "elements": [], "subminimums": [], "notes": [], "total": Decimal("0"),
+              "max_total": Decimal("0")}
 
-    # EME: automatic level
     if stype == "EME":
-        if black_owned_percent >= 51:
-            level = 1
-        else:
-            level = 4
-        return level, LEVEL_RECOGNITION.get(level, "100%")
+        lvl = _auto_level(bo, params["auto_level_black_owned"])
+        result.update(level=lvl, base_level=lvl, discounted=False,
+                      recognition_pct=params["recognition_pct"][str(lvl)])
+        result["notes"].append("EME: level set automatically from black ownership of %s%%." % bo)
+        return result
 
-    thresholds = GENERIC_THRESHOLDS if stype == "GENERIC" else QSE_THRESHOLDS
-    for threshold, lvl in thresholds:
-        if total_score >= threshold:
-            return lvl, LEVEL_RECOGNITION.get(lvl, "0%")
-    return 8, LEVEL_RECOGNITION[8]
+    for el in params["elements"]:
+        raw = d(inputs.get(el["key"]))
+        bonus = d(inputs.get(el["key"] + "_bonus"))
+        if raw < 0 or bonus < 0:
+            raise InputError("%s points cannot be negative." % el["label"])
+        if raw > d(el["max"]):
+            raise InputError("%s: %s points exceeds the maximum of %s." % (el["label"], raw, el["max"]))
+        if bonus > d(el["bonus"]):
+            raise InputError("%s: bonus of %s exceeds the maximum bonus of %s." % (el["label"], bonus, el["bonus"]))
+        achieved = raw + bonus
+        result["elements"].append({
+            "key": el["key"], "label": el["label"], "max": d(el["max"]), "bonus_max": d(el["bonus"]),
+            "points": raw, "bonus": bonus, "achieved": achieved,
+            "pct": (raw / d(el["max"]) * 100).quantize(TWO, ROUND_HALF_UP) if el["max"] else Decimal(0),
+            "priority": el["priority"],
+        })
+        result["total"] += achieved
+        result["max_total"] += d(el["max"])
 
+    for sm in params["subminimums"]:
+        pts = d(inputs.get(sm["key"]))
+        if pts < 0 or pts > d(sm["max"]):
+            raise InputError("%s must be between 0 and %s." % (sm["label"], sm["max"]))
+        need = (d(sm["max"]) * d(sm["min_pct"]) / 100).quantize(TWO, ROUND_HALF_UP)
+        result["subminimums"].append({"key": sm["key"], "label": sm["label"], "element": sm["element"],
+                                      "points": pts, "required": need, "met": pts >= need})
 
-def _thin_border():
-    thin = Side(style="thin")
-    return Border(left=thin, right=thin, top=thin, bottom=thin)
+    # Consistency: a sub-element cannot exceed its element's points
+    for sm in result["subminimums"]:
+        el = next(e for e in result["elements"] if e["key"] == sm["element"])
+        if sm["key"] == "skills_total" and sm["points"] != el["points"]:
+            result["notes"].append("Skills sub-minimum points (%s) differ from Skills element points (%s); the "
+                                   "sub-minimum is assessed on the figure entered for it." % (sm["points"], el["points"]))
+        if sm["points"] > el["points"] + el["bonus"]:
+            raise InputError("%s (%s) cannot exceed the %s points (%s)."
+                             % (sm["label"], sm["points"], el["label"], el["achieved"]))
 
+    by_el = {}
+    for sm in result["subminimums"]:
+        by_el.setdefault(sm["element"], []).append(sm["met"])
+    el_met = {k: all(v) for k, v in by_el.items()}
+    if params["priority_rule"] == "all":
+        compliant = all(el_met.values())
+        rule_txt = "all priority elements (Ownership, Skills Development, ESD)"
+    else:  # QSE: ownership plus at least one of skills / esd
+        compliant = el_met.get("ownership", True) and (el_met.get("skills", True) or el_met.get("esd", True))
+        rule_txt = "Ownership plus at least one of Skills Development or ESD"
 
-def _hfill(hex_color):
-    return PatternFill("solid", fgColor=hex_color)
-
-
-def generate_scorecard_excel(scorecard_data: dict) -> bytes:
-    """Generate BBBEE scorecard Excel workbook."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "BBBEE Scorecard"
-
-    ws.column_dimensions["A"].width = 35
-    ws.column_dimensions["B"].width = 20
-    ws.column_dimensions["C"].width = 20
-    ws.column_dimensions["D"].width = 20
-    ws.column_dimensions["E"].width = 20
-
-    border = _thin_border()
-
-    # Title
-    ws.merge_cells("A1:E1")
-    ws["A1"] = "BROAD-BASED BLACK ECONOMIC EMPOWERMENT (BBBEE) SCORECARD"
-    ws["A1"].font = Font(bold=True, size=13, color=WHITE)
-    ws["A1"].fill = _hfill(NAVY)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 32
-
-    # Company info
-    info = [
-        ("Company:", scorecard_data.get("company_name", "")),
-        ("Assessment Year:", scorecard_data.get("assessment_year", str(datetime.now().year))),
-        ("Scorecard Type:", scorecard_data.get("scorecard_type", "Generic")),
-        ("BBBEE Level:", scorecard_data.get("bbbee_level", 8)),
-        ("Generated:", datetime.now().strftime("%d %B %Y")),
-    ]
-    for i, (label, value) in enumerate(info, 2):
-        ws[f"A{i}"] = label
-        ws[f"B{i}"] = value
-        ws[f"A{i}"].font = Font(bold=True)
-        ws[f"A{i}"].fill = _hfill(LIGHT_BLUE)
-        ws[f"A{i}"].border = border
-        ws[f"B{i}"].border = border
-
-    # Scorecard table
-    stype = scorecard_data.get("scorecard_type", "Generic").upper()
-    header_row = 8
-    headers = ["Element", "Max Points", "Score Achieved", "% Achievement", "Weighting"]
-    for col, h in enumerate(headers, 1):
-        c = ws.cell(row=header_row, column=col, value=h)
-        c.font = Font(bold=True, color=WHITE)
-        c.fill = _hfill(HEADER_BLUE)
-        c.alignment = Alignment(horizontal="center", wrap_text=True)
-        c.border = border
-    ws.row_dimensions[header_row].height = 28
-
-    if stype == "GENERIC":
-        elements = [
-            ("Ownership", 25, scorecard_data.get("ownership_score", 0)),
-            ("Management Control", 19, scorecard_data.get("management_score", 0)),
-            ("Skills Development", 20, scorecard_data.get("skills_score", 0)),
-            ("Enterprise & Supplier Development", 40, scorecard_data.get("esd_score", 0)),
-            ("Socio-Economic Development", 5, scorecard_data.get("sed_score", 0)),
-        ]
-        max_total = 109
-    elif stype == "QSE":
-        elements = [
-            ("Ownership", 25, scorecard_data.get("ownership_score", 0)),
-            ("Management Control", 25, scorecard_data.get("management_score", 0)),
-            ("Skills Development", 25, scorecard_data.get("skills_score", 0)),
-            ("Enterprise & Supplier Development", 25, scorecard_data.get("esd_score", 0)),
-        ]
-        max_total = 100
-    else:  # EME
-        elements = [
-            ("Automatic BBBEE Level (EME)", 100, 100),
-        ]
-        max_total = 100
-
-    for i, (element, max_pts, score) in enumerate(elements):
-        row = header_row + 1 + i
-        fill = _hfill(GREY) if i % 2 == 0 else PatternFill()
-        pct = (score / max_pts * 100) if max_pts else 0
-        weight = (max_pts / max_total * 100) if max_total else 0
-        vals = [element, max_pts, score, f"{pct:.1f}%", f"{weight:.1f}%"]
-        for col, val in enumerate(vals, 1):
-            c = ws.cell(row=row, column=col, value=val)
-            c.border = border
-            c.fill = fill
-            if col >= 2:
-                c.alignment = Alignment(horizontal="center")
-
-    # Total row
-    total_row = header_row + 1 + len(elements)
-    total_score = scorecard_data.get("total_score", 0)
-    ws.cell(row=total_row, column=1, value="TOTAL SCORE").font = Font(bold=True, color=WHITE)
-    ws.cell(row=total_row, column=1).fill = _hfill(NAVY)
-    ws.cell(row=total_row, column=1).border = border
-    ws.cell(row=total_row, column=2, value=max_total).font = Font(bold=True, color=WHITE)
-    ws.cell(row=total_row, column=2).fill = _hfill(NAVY)
-    ws.cell(row=total_row, column=2).alignment = Alignment(horizontal="center")
-    ws.cell(row=total_row, column=2).border = border
-    ws.cell(row=total_row, column=3, value=total_score).font = Font(bold=True, color=WHITE)
-    ws.cell(row=total_row, column=3).fill = _hfill(NAVY)
-    ws.cell(row=total_row, column=3).alignment = Alignment(horizontal="center")
-    ws.cell(row=total_row, column=3).border = border
-
-    level = scorecard_data.get("bbbee_level", 8)
-    recognition = LEVEL_RECOGNITION.get(level, "0%")
-
-    level_row = total_row + 2
-    ws.merge_cells(f"A{level_row}:B{level_row}")
-    ws.cell(row=level_row, column=1, value=f"BBBEE LEVEL: {level}").font = Font(bold=True, size=14, color=WHITE)
-    ws.cell(row=level_row, column=1).fill = _hfill(NAVY)
-    ws.cell(row=level_row, column=1).alignment = Alignment(horizontal="center")
-    ws.merge_cells(f"C{level_row}:E{level_row}")
-    ws.cell(row=level_row, column=3, value=f"Procurement Recognition: {recognition}").font = Font(bold=True)
-    ws.cell(row=level_row, column=3).fill = _hfill(LIGHT_BLUE)
-    ws.cell(row=level_row, column=3).alignment = Alignment(horizontal="center")
-
-    out = io.BytesIO()
-    wb.save(out)
-    return out.getvalue()
+    total = result["total"].quantize(TWO, ROUND_HALF_UP)
+    result["total"] = total
+    base = level_for_points(total, params["level_thresholds"])
+    level, discounted = base, False
+    if not compliant and base != "NC":
+        steps = params.get("discount_levels", 1)
+        level = base + steps if base + steps <= 8 else "NC"
+        discounted = True
+        failed = [s["label"] for s in result["subminimums"] if not s["met"]]
+        result["notes"].append("Discounted by %d level because the sub-minimum was not met for %s: %s."
+                               % (steps, rule_txt, "; ".join(failed)))
+    auto = params.get("auto_level_black_owned")
+    if auto:
+        a = _auto_level(bo, auto)
+        if a is not None and (level == "NC" or a < level):
+            result["notes"].append("Black ownership of %s%% qualifies for automatic Level %s (sworn affidavit "
+                                   "route), which is better than the scorecard result." % (bo, a))
+            level = a
+    result.update(level=level, base_level=base, discounted=discounted, compliant_priority=compliant,
+                  recognition_pct=params["recognition_pct"][str(level)])
+    return result
 
 
-def generate_scorecard_pdf(scorecard_data: dict) -> bytes:
-    """Generate BBBEE Certificate Summary PDF."""
+# ─── Snapshot & reports ──────────────────────────────────────────────────────
+
+def build_snapshot(db, record, company, rule_set, inputs_row):
+    import json
+    return {
+        "kind": "bbbee",
+        "period": {"label": record["period_label"], "start": record["period_start"], "end": record["period_end"]},
+        "company": company,
+        "rules": {"id": rule_set["id"], "code": rule_set["code"], "version": rule_set["version"],
+                  "verified": rule_set["verified"], "params": rule_set["params"]},
+        "scorecard_type": inputs_row["scorecard_type"],
+        "annual_turnover": inputs_row["annual_turnover"],
+        "black_owned_pct": inputs_row["black_owned_pct"],
+        "inputs": json.loads(inputs_row["inputs_json"] or "{}"),
+    }
+
+
+def calc_from_snapshot(s):
+    return calculate(s["scorecard_type"], s["rules"]["params"], s["inputs"], s["black_owned_pct"] or 0)
+
+
+def checks(s, calc):
+    out = []
+    expected = classify(s["annual_turnover"] or 0, s["rules"]["params"])
+    out.append({"check": "Scorecard type matches turnover band", "expected": expected,
+                "actual": s["scorecard_type"], "ok": expected == s["scorecard_type"],
+                "detail": "Sector codes may set different bands; confirm."})
+    if calc["elements"]:
+        add = sum((e["achieved"] for e in calc["elements"]), Decimal(0)).quantize(TWO)
+        out.append({"check": "Total = sum of element points", "expected": str(add), "actual": str(calc["total"]),
+                    "ok": add == calc["total"], "detail": ""})
+    return out
+
+
+def _level_txt(level):
+    return "Non-compliant" if level == "NC" else "Level %s" % level
+
+
+def generate_xlsx(s, ctx):
+    calc = calc_from_snapshot(s)
+    c = s["company"]
+    wb, ws = new_workbook("Scorecard")
+    widths(ws, [42, 12, 12, 12, 14, 12])
+    row = title_block(ws, "INTERNAL B-BBEE CALCULATION — SCORECARD SUMMARY",
+                      "Internal working only. This is NOT a B-BBEE certificate or sworn affidavit.", 6,
+                      [("Company:", c.get("company_name") or ""), ("Measurement period:", s["period"]["label"]),
+                       ("Scorecard:", calc["scorecard"]),
+                       ("Annual turnover (R):", float(d(s["annual_turnover"]))),
+                       ("Black ownership (%):", float(d(s["black_owned_pct"])))] + report_meta(ctx))
+    if not s["rules"]["verified"]:
+        row = warning_row(ws, row, "Rule set %s has not been verified against the Codes of Good Practice."
+                          % s["rules"]["code"], 6)
+    if calc["elements"]:
+        row = header_row(ws, row, ["Element", "Max points", "Bonus max", "Points", "Bonus", "% of max"])
+        for i, e in enumerate(calc["elements"]):
+            row = data_row(ws, row, [e["label"] + (" (priority)" if e["priority"] else ""), float(e["max"]),
+                                     float(e["bonus_max"]), float(e["points"]), float(e["bonus"]), float(e["pct"])],
+                           shade=i % 2 == 0)
+        row = data_row(ws, row, ["TOTAL", float(calc["max_total"]), "", float(calc["total"]), "", ""], total=True) + 1
+        row = header_row(ws, row, ["Priority sub-minimum", "Required", "Achieved", "Met", "", ""])
+        for sm in calc["subminimums"]:
+            row = data_row(ws, row, [sm["label"], float(sm["required"]), float(sm["points"]),
+                                     "Yes" if sm["met"] else "NO", "", ""])
+        row += 1
+    row = data_row(ws, row, ["Level from points", _level_txt(calc["base_level"]), "", "", "", ""], bold=True)
+    row = data_row(ws, row, ["Final level", _level_txt(calc["level"]), "", "", "", ""], bold=True)
+    row = data_row(ws, row, ["Procurement recognition", "%s%%" % calc["recognition_pct"], "", "", "", ""], bold=True)
+    for n in calc["notes"]:
+        row = warning_row(ws, row, n, 6)
+    return save(wb, ctx.get("generated_dt"))
+
+
+def generate_pdf(s, ctx):
     if not RL_AVAILABLE:
         raise RuntimeError("reportlab not installed.")
-
+    calc = calc_from_snapshot(s)
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2*cm, bottomMargin=2*cm,
-                             leftMargin=2*cm, rightMargin=2*cm)
-    styles = getSampleStyleSheet()
-    story = []
-
-    navy_rl = colors.HexColor("#1A2744")
-    blue_rl = colors.HexColor("#2D9CDB")
-    light_blue_rl = colors.HexColor("#D9E8F5")
-
-    # Title
-    title_style = ParagraphStyle(
-        "Title", parent=styles["Title"],
-        textColor=colors.white, backColor=navy_rl,
-        fontSize=16, spaceAfter=0, alignment=TA_CENTER,
-        borderPad=10,
-    )
-    story.append(Paragraph("BBBEE COMPLIANCE CERTIFICATE SUMMARY", title_style))
-    story.append(Spacer(1, 0.5*cm))
-
-    # Sub-heading
-    story.append(Paragraph(
-        "Broad-Based Black Economic Empowerment — Scorecard Summary",
-        ParagraphStyle("sub", parent=styles["Normal"], fontSize=11, alignment=TA_CENTER,
-                       textColor=navy_rl)
-    ))
-    story.append(Spacer(1, 0.5*cm))
-    story.append(HRFlowable(width="100%", thickness=2, color=blue_rl))
-    story.append(Spacer(1, 0.3*cm))
-
-    # Company info table
-    level = scorecard_data.get("bbbee_level", 8)
-    recognition = LEVEL_RECOGNITION.get(level, "0%")
-    stype = scorecard_data.get("scorecard_type", "Generic")
-
-    info_data = [
-        ["Company Name:", scorecard_data.get("company_name", "N/A")],
-        ["Assessment Year:", scorecard_data.get("assessment_year", str(datetime.now().year))],
-        ["Scorecard Type:", stype],
-        ["Total Score:", f"{scorecard_data.get('total_score', 0):.2f}"],
-        ["BBBEE Level:", f"Level {level}"],
-        ["Procurement Recognition:", recognition],
-        ["Report Date:", datetime.now().strftime("%d %B %Y")],
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=2 * cm,
+                            rightMargin=2 * cm, title="Internal B-BBEE Calculation",
+                            author="AnotherBPO HR Compliance Suite", invariant=1)
+    st = getSampleStyleSheet()
+    navy = colors.HexColor("#1A2744")
+    story = [
+        Paragraph("INTERNAL B-BBEE CALCULATION — SCORECARD SUMMARY",
+                  ParagraphStyle("t", parent=st["Title"], textColor=navy, fontSize=15)),
+        Paragraph("Internal working document. This is NOT a B-BBEE verification certificate or sworn affidavit. "
+                  "Only a SANAS-accredited verification agency (or a valid sworn affidavit where permitted) "
+                  "can confirm a B-BBEE level.",
+                  ParagraphStyle("w", parent=st["Normal"], textColor=colors.HexColor("#7A4B00"),
+                                 backColor=colors.HexColor("#FFF3CD"), borderPadding=6, fontSize=9)),
+        Spacer(1, 0.5 * cm),
     ]
-    info_table = Table(info_data, colWidths=[6*cm, 10*cm])
-    info_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), light_blue_rl),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ROWBACKGROUNDS", (1, 0), (-1, -1), [colors.white, colors.HexColor("#F2F2F2")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    story.append(info_table)
-    story.append(Spacer(1, 0.5*cm))
-
-    # Scorecard breakdown
-    story.append(Paragraph("Scorecard Breakdown", ParagraphStyle(
-        "h2", parent=styles["Heading2"], textColor=navy_rl
-    )))
-
-    if stype.upper() == "GENERIC":
-        elements = [
-            ["Element", "Max Points", "Score"],
-            ["Ownership", "25", f"{scorecard_data.get('ownership_score', 0):.2f}"],
-            ["Management Control", "19", f"{scorecard_data.get('management_score', 0):.2f}"],
-            ["Skills Development", "20", f"{scorecard_data.get('skills_score', 0):.2f}"],
-            ["Enterprise & Supplier Development", "40", f"{scorecard_data.get('esd_score', 0):.2f}"],
-            ["Socio-Economic Development", "5", f"{scorecard_data.get('sed_score', 0):.2f}"],
-            ["TOTAL", "109", f"{scorecard_data.get('total_score', 0):.2f}"],
-        ]
-    elif stype.upper() == "QSE":
-        elements = [
-            ["Element", "Max Points", "Score"],
-            ["Ownership", "25", f"{scorecard_data.get('ownership_score', 0):.2f}"],
-            ["Management Control", "25", f"{scorecard_data.get('management_score', 0):.2f}"],
-            ["Skills Development", "25", f"{scorecard_data.get('skills_score', 0):.2f}"],
-            ["Enterprise & Supplier Development", "25", f"{scorecard_data.get('esd_score', 0):.2f}"],
-            ["TOTAL", "100", f"{scorecard_data.get('total_score', 0):.2f}"],
-        ]
-    else:
-        elements = [
-            ["Element", "Details"],
-            ["Scorecard Type", "Exempted Micro Enterprise (EME)"],
-            ["BBBEE Level", f"Level {level} (Automatic)"],
-            ["Recognition", recognition],
-        ]
-
-    score_table = Table(elements, colWidths=[9*cm, 3.5*cm, 3.5*cm] if len(elements[0]) == 3 else [9*cm, 7*cm])
-    score_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), navy_rl),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("BACKGROUND", (0, -1), (-1, -1), light_blue_rl),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F2F2")]),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-    ]))
-    story.append(score_table)
-    story.append(Spacer(1, 0.5*cm))
-
-    # Level badge
-    level_color = colors.HexColor(LEVEL_COLOURS.get(level, "#FF0000"))
-    level_data = [[f"BBBEE LEVEL {level}", f"Procurement Recognition: {recognition}"]]
-    level_table = Table(level_data, colWidths=[8*cm, 8*cm])
-    level_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 0), level_color),
-        ("BACKGROUND", (1, 0), (1, 0), light_blue_rl),
-        ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 13),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 12),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
-        ("GRID", (0, 0), (-1, -1), 1, colors.white),
-    ]))
-    story.append(level_table)
-    story.append(Spacer(1, 0.5*cm))
-
-    # Disclaimer
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.grey))
-    story.append(Spacer(1, 0.2*cm))
-    story.append(Paragraph(
-        "This certificate summary is generated by the HR Audit System for internal use. "
-        "Official BBBEE verification must be conducted by an accredited verification agency.",
-        ParagraphStyle("disc", parent=styles["Normal"], fontSize=8, textColor=colors.grey,
-                       alignment=TA_CENTER)
-    ))
-
+    info = [["Company", s["company"].get("company_name") or ""], ["Measurement period", s["period"]["label"]],
+            ["Scorecard", calc["scorecard"]], ["Total points", str(calc["total"])],
+            ["Level from points", _level_txt(calc["base_level"])], ["Final level", _level_txt(calc["level"])],
+            ["Procurement recognition", "%s%%" % calc["recognition_pct"]]] + \
+           [[k.rstrip(":"), str(v)] for k, v in report_meta(ctx)]
+    t = Table(info, colWidths=[6 * cm, 10 * cm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                           ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#D9E8F5")), ("FONTSIZE", (0, 0), (-1, -1), 9)]))
+    story += [t, Spacer(1, 0.4 * cm)]
+    if calc["elements"]:
+        rows = [["Element", "Max", "Points", "Bonus"]] + [
+            [e["label"], str(e["max"]), str(e["points"]), str(e["bonus"])] for e in calc["elements"]] + [
+            ["TOTAL", str(calc["max_total"]), str(calc["total"]), ""]]
+        t2 = Table(rows, colWidths=[9 * cm, 2.3 * cm, 2.3 * cm, 2.3 * cm])
+        t2.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                                ("BACKGROUND", (0, 0), (-1, 0), navy), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 9)]))
+        story += [t2, Spacer(1, 0.4 * cm)]
+        rows = [["Priority sub-minimum", "Required", "Achieved", "Met"]] + [
+            [sm["label"], str(sm["required"]), str(sm["points"]), "Yes" if sm["met"] else "NO"]
+            for sm in calc["subminimums"]]
+        t3 = Table(rows, colWidths=[9 * cm, 2.3 * cm, 2.3 * cm, 2.3 * cm])
+        t3.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                                ("BACKGROUND", (0, 0), (-1, 0), navy), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTSIZE", (0, 0), (-1, -1), 9)]))
+        story += [t3, Spacer(1, 0.4 * cm)]
+    for n in calc["notes"]:
+        story.append(Paragraph(n, st["Normal"]))
+    if not s["rules"]["verified"]:
+        story.append(Paragraph("Rule set %s has not been verified against the official Codes." % s["rules"]["code"],
+                               st["Italic"]))
     doc.build(story)
     return buf.getvalue()

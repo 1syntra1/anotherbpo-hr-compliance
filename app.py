@@ -2,29 +2,123 @@ import os
 import io
 import csv
 import sqlite3
+import secrets
+import logging
 from datetime import datetime, date, timedelta
 from functools import wraps
 from flask import (
     Flask, g, render_template, request, redirect,
-    url_for, flash, send_file, jsonify, session
+    url_for, flash, send_file, jsonify, session, abort
 )
-from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import HTTPException
+
+log = logging.getLogger("hr_audit")
+
+# ─── Configuration ───────────────────────────────────────────────────────────
+# All runtime state (database, uploads, generated reports, secret key) lives under
+# DATA_DIR so a single persistent volume is enough in Docker/Coolify.
+DATA_DIR = os.environ.get("HR_DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+DATABASE = os.path.join(DATA_DIR, "hr_audit.db")
+UPLOAD_FOLDER = os.path.join(DATA_DIR, "uploads")
+ALLOWED_EXTENSIONS = {"csv", "xlsx"}
+MAX_UPLOAD_MB = int(os.environ.get("HR_MAX_UPLOAD_MB", "10"))
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def _load_secret_key():
+    """HR_AUDIT_SECRET wins. Otherwise a random key is generated once and kept in
+    DATA_DIR (never in the repo), so sessions survive restarts on the same volume."""
+    env_key = os.environ.get("HR_AUDIT_SECRET")
+    if env_key:
+        if len(env_key) < 32:
+            raise RuntimeError("HR_AUDIT_SECRET must be at least 32 characters.")
+        return env_key
+    path = os.path.join(DATA_DIR, ".secret_key")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            key = fh.read().strip()
+        if len(key) >= 32:
+            return key
+    key = secrets.token_hex(32)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(key)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return key
+
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("HR_AUDIT_SECRET", "anotherbpo-hr-compliance-dev-key")
+app.secret_key = _load_secret_key()
+app.config.update(
+    MAX_CONTENT_LENGTH=MAX_UPLOAD_MB * 1024 * 1024,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Secure cookies by default; set HR_COOKIE_SECURE=0 only for plain-HTTP local use.
+    SESSION_COOKIE_SECURE=os.environ.get("HR_COOKIE_SECURE", "1") != "0",
+    SESSION_COOKIE_NAME="hrcs_session",
+)
 
 PURGE_HOLD_DAYS = 30  # admin-approved deletions are held this many days before purge
+MAX_FAILED_LOGINS = 5       # consecutive failures before the account is locked
+LOCKOUT_MINUTES = 15
 
 # ── Session behaviour ────────────────────────────────────────
 # When "stay logged in" is NOT chosen: after IDLE_WARNING_AFTER seconds of inactivity a
-# warning popup appears and counts down LOGOUT_COUNTDOWN seconds before signing out
-# (total ≈ 1 minute). INACTIVITY_TIMEOUT is the server-side backstop and must comfortably
-# exceed IDLE_WARNING_AFTER + LOGOUT_COUNTDOWN so a "Stay signed in" click always succeeds.
-IDLE_WARNING_AFTER = 30   # seconds idle before the warning popup
-LOGOUT_COUNTDOWN = 30     # seconds counted down inside the popup
-INACTIVITY_TIMEOUT = 75   # server-side backstop (seconds)
+# warning popup appears and counts down LOGOUT_COUNTDOWN seconds before signing out.
+# INACTIVITY_TIMEOUT is the server-side backstop and must comfortably exceed
+# IDLE_WARNING_AFTER + LOGOUT_COUNTDOWN so a "Stay signed in" click always succeeds.
+IDLE_WARNING_AFTER = 14 * 60  # seconds idle before the warning popup
+LOGOUT_COUNTDOWN = 60         # seconds counted down inside the popup
+INACTIVITY_TIMEOUT = 16 * 60  # server-side backstop (seconds)
+IDLE_LABEL = "15 minutes"
 app.permanent_session_lifetime = timedelta(days=30)  # "stay logged in" duration
+
+
+# ─── CSRF protection ─────────────────────────────────────────────────────────
+
+def csrf_token():
+    tok = session.get("_csrf")
+    if not tok:
+        tok = secrets.token_urlsafe(32)
+        session["_csrf"] = tok
+    return tok
+
+
+@app.before_request
+def csrf_protect():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    sent = request.form.get("_csrf") or request.headers.get("X-CSRF-Token")
+    expected = session.get("_csrf")
+    if not expected or not sent or not secrets.compare_digest(sent, expected):
+        abort(400, description="Your form expired or was not sent from this site. Please reload the page and try again.")
+
+
+# ─── Authentication / session ────────────────────────────────────────────────
+
+@app.before_request
+def load_current_user():
+    """Re-read the signed-in user on every request so a deleted, disabled or demoted
+    account loses access immediately (the cookie alone is never trusted for role)."""
+    g.user = None
+    if not session.get("logged_in"):
+        return
+    row = get_db().execute("SELECT * FROM users WHERE id=?", (session.get("user_id"),)).fetchone()
+    if (row is None or not row["active"]
+            or row["session_version"] != session.get("session_version")):
+        session.clear()
+        if request.endpoint not in ("login", "static", "landing"):
+            flash("Your session has ended. Please sign in again.", "info")
+            return redirect(url_for("login"))
+        return
+    g.user = row
+    session["role"] = row["role"]
+    session["username"] = row["username"]
 
 
 @app.before_request
@@ -42,15 +136,43 @@ def enforce_inactivity_timeout():
     last = session.get("last_activity")
     if last is not None and (now - last) > INACTIVITY_TIMEOUT:
         session.clear()
-        flash("You were signed out after 1 minute of inactivity.", "info")
+        flash("You were signed out after %s of inactivity." % IDLE_LABEL, "info")
         return redirect(url_for("login"))
     session["last_activity"] = now
+
+
+@app.after_request
+def security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    if session.get("logged_in"):
+        # Employee data must not linger in the browser cache after sign-out.
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.errorhandler(HTTPException)
+def handle_http_error(e):
+    if request.is_json or request.path.startswith(("/checklist/", "/api/", "/session/")):
+        return jsonify({"ok": False, "error": e.description}), e.code
+    return render_template("error.html", code=e.code, title=e.name, message=e.description), e.code
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+    # Never show stack traces, SQL or paths to the user; keep the detail in the server log.
+    log.exception("Unhandled error on %s %s", request.method, request.path)
+    if request.is_json or request.path.startswith(("/checklist/", "/api/", "/session/")):
+        return jsonify({"ok": False, "error": "Something went wrong. The error has been logged."}), 500
+    return render_template("error.html", code=500, title="Something went wrong",
+                           message="The error has been logged. Please try again or contact an administrator."), 500
 
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("logged_in"):
+        if g.get("user") is None:
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
@@ -59,28 +181,29 @@ def login_required(f):
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("logged_in"):
+        if g.get("user") is None:
             return redirect(url_for("login"))
-        if session.get("role") != "admin":
+        if g.user["role"] != "admin":
+            log_action("access_denied", "auth", "Blocked non-admin access to %s" % request.path)
             flash("That area is restricted to administrators.", "danger")
             return redirect(url_for("dashboard"))
         return f(*args, **kwargs)
     return decorated
 
-DATABASE = os.path.join(os.path.dirname(__file__), "data", "hr_audit.db")
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "data", "uploads")
-ALLOWED_EXTENSIONS = {"csv", "xlsx", "xls"}
-
-os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 
 # ─── Database helpers ────────────────────────────────────────────────────────
 
+def connect_db():
+    db = sqlite3.connect(DATABASE, detect_types=sqlite3.PARSE_DECLTYPES, timeout=15)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = ON")
+    db.execute("PRAGMA busy_timeout = 15000")
+    return db
+
+
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE, detect_types=sqlite3.PARSE_DECLTYPES)
-        g.db.row_factory = sqlite3.Row
+        g.db = connect_db()
     return g.db
 
 
@@ -91,256 +214,67 @@ def close_db(error):
         db.close()
 
 
+def _seed_admin(db):
+    """First run only: create a single administrator. The password comes from
+    HR_ADMIN_PASSWORD, or is generated and written to DATA_DIR for the operator to
+    collect. Either way the account must change its password at first sign-in."""
+    if db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+        return
+    username = os.environ.get("HR_ADMIN_USERNAME", "admin")
+    password = os.environ.get("HR_ADMIN_PASSWORD")
+    if not password:
+        password = secrets.token_urlsafe(14)
+        path = os.path.join(DATA_DIR, "initial_admin_password.txt")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("Username: %s\nPassword: %s\n\nDelete this file after first sign-in.\n"
+                     % (username, password))
+        log.warning("Created first administrator '%s'. Password written to %s", username, path)
+    db.execute(
+        """INSERT INTO users (username, password_hash, role, full_name, must_change_password)
+           VALUES (?,?,?,?,1)""",
+        (username, generate_password_hash(password), "admin", "System Administrator"),
+    )
+
+
+def _seed_starter_records(db):
+    """Fresh install: open the current period for each annual obligation so the
+    compliance calendar is useful on day one. Everything is editable."""
+    import json
+    from modules import records as recmod
+    row = db.execute("SELECT params_json FROM rule_sets WHERE code='STATUTORY-DEADLINES'").fetchone()
+    params = json.loads(row[0]) if row else {}
+    system = {"id": None, "username": "system"}
+    today = date.today()
+    for module, yr in (("ee", today.year), ("wsp", today.year), ("coida", today.year - 1),
+                       ("cipc_bo", today.year), ("bbbee", today.year)):
+        label, start, end, due = recmod.default_period(module, yr, params)
+        if due and due < today.isoformat():  # that cycle has passed: open the next one still due
+            yr += 1
+            label, start, end, due = recmod.default_period(module, yr, params)
+        recmod.create_record(db, module, label, system, period_year=yr, period_start=start, period_end=end,
+                             due_date=due)
+
+
 def init_db():
-    db = sqlite3.connect(DATABASE, detect_types=sqlite3.PARSE_DECLTYPES)
-    db.row_factory = sqlite3.Row
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS employees (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            emp_number TEXT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            id_number TEXT,
-            race TEXT,
-            gender TEXT,
-            disability TEXT DEFAULT 'No',
-            occupational_level TEXT,
-            department TEXT,
-            job_title TEXT,
-            salary REAL,
-            employment_date TEXT,
-            province TEXT,
-            nationality TEXT,
-            coida_class_code TEXT,
-            coida_subclass TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS training_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            employee_id INTEGER,
-            employee_name TEXT,
-            intervention_type TEXT,
-            nqf_level TEXT,
-            cost REAL,
-            provider TEXT,
-            target_date TEXT,
-            actual_date TEXT,
-            certificate TEXT,
-            status TEXT DEFAULT 'Planned',
-            seta TEXT,
-            sdl_number TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (employee_id) REFERENCES employees(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS coida_classes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            class_code TEXT,
-            subclass TEXT,
-            description TEXT,
-            num_employees INTEGER DEFAULT 0,
-            annual_earnings REAL DEFAULT 0,
-            assessment_year TEXT,
-            employer_reg_number TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS logs_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            insurer TEXT,
-            policy_number TEXT,
-            issue_date TEXT,
-            expiry_date TEXT,
-            status TEXT DEFAULT 'Valid',
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS bbbee_data (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scorecard_type TEXT,
-            ownership_score REAL DEFAULT 0,
-            management_score REAL DEFAULT 0,
-            skills_score REAL DEFAULT 0,
-            esd_score REAL DEFAULT 0,
-            sed_score REAL DEFAULT 0,
-            total_score REAL DEFAULT 0,
-            bbbee_level INTEGER DEFAULT 8,
-            black_owned_percent REAL DEFAULT 0,
-            assessment_year TEXT,
-            company_name TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS company_info (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_name TEXT,
-            reg_number TEXT,
-            reporting_year TEXT,
-            designated_employer TEXT,
-            seta TEXT,
-            sdl_number TEXT,
-            skills_levy REAL DEFAULT 0,
-            employer_reg_number TEXT,
-            updated_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS checklist_state (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            module TEXT NOT NULL,
-            item_key TEXT NOT NULL,
-            checked INTEGER DEFAULT 0,
-            updated_at TEXT DEFAULT (datetime('now')),
-            UNIQUE(module, item_key)
-        );
-
-        CREATE TABLE IF NOT EXISTS custom_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            module TEXT NOT NULL,
-            step_key TEXT NOT NULL,
-            text TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS hidden_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            module TEXT NOT NULL,
-            item_key TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
-            UNIQUE(module, item_key)
-        );
-
-        CREATE TABLE IF NOT EXISTS gbs_claim (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_name TEXT,
-            claim_quarter TEXT,
-            claim_year TEXT,
-            dtic_notification_date TEXT,
-            submission_deadline TEXT,
-            num_campaigns INTEGER DEFAULT 0,
-            num_qualifying_employees INTEGER DEFAULT 0,
-            export_revenue REAL DEFAULT 0,
-            premises TEXT,
-            auditor TEXT,
-            notes TEXT,
-            updated_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS gbs_projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quarter TEXT NOT NULL,                     -- 'Q1' / 'Q2' / 'Q3' / 'Q4'
-            year INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Draft',      -- Draft / In Progress / Submitted
-            company_name TEXT,
-            dtic_notification_date TEXT,
-            submission_deadline TEXT,
-            num_campaigns INTEGER DEFAULT 0,
-            num_qualifying_employees INTEGER DEFAULT 0,
-            export_revenue REAL DEFAULT 0,
-            premises TEXT,
-            auditor TEXT,
-            notes TEXT,
-            submitted_at TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',         -- 'admin' or 'user'
-            full_name TEXT,
-            active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT (datetime('now')),
-            last_login TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT DEFAULT (datetime('now')),
-            username TEXT,
-            role TEXT,
-            action TEXT,
-            category TEXT,                             -- auth / project / task / trash / user / deadline
-            detail TEXT,
-            target TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS deadlines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dkey TEXT UNIQUE NOT NULL,
-            title TEXT NOT NULL,
-            authority TEXT,
-            due_date TEXT,                             -- ISO date, or NULL for "varies"
-            note TEXT,
-            sort_order INTEGER DEFAULT 0,
-            updated_at TEXT DEFAULT (datetime('now'))
-        );
-    """)
-
-    # ── Migrations: add trash/soft-delete columns to gbs_projects ──
-    existing = [r["name"] for r in db.execute("PRAGMA table_info(gbs_projects)").fetchall()]
-    migrations = {
-        "trashed": "INTEGER DEFAULT 0",
-        "deleted_at": "TEXT",
-        "deleted_by": "TEXT",
-        "purge_at": "TEXT",
-        "purge_approved_at": "TEXT",
-        "purge_approved_by": "TEXT",
-    }
-    for col, coldef in migrations.items():
-        if col not in existing:
-            db.execute("ALTER TABLE gbs_projects ADD COLUMN %s %s" % (col, coldef))
-
-    # ── Seed default accounts if none exist ──
-    count = db.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
-    if count == 0:
-        db.execute(
-            "INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
-            ("admin", generate_password_hash("anotherbpo2024"), "admin", "System Administrator"),
-        )
-        db.execute(
-            "INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
-            ("user", generate_password_hash("anotherbpo2024"), "user", "Standard User"),
-        )
-
-    # ── Seed submission deadlines if none exist ──
-    dcount = db.execute("SELECT COUNT(*) AS c FROM deadlines").fetchone()["c"]
-    if dcount == 0:
-        seed_deadlines = [
-            # dkey, title, authority, due_date, note, sort_order
-            ("wsp", "WSP & ATR", "SETA", "2026-06-30", "Workplace Skills Plan & Annual Training Report", 1),
-            ("cipc_bo", "CIPC Beneficial Ownership", "CIPC", "2026-07-30", "Annual beneficial ownership filing", 2),
-            ("ee", "Employment Equity (EEA2 & EEA4)", "DoEL", "2027-01-15", "Online submission deadline", 3),
-            ("coida", "COIDA Return of Earnings (W.As.8)", "Compensation Fund", "2027-03-31", "Annual Return of Earnings", 4),
-            ("gbs", "GBS Incentive Claim", "the dtic", None, "Within 30 days of dtic notification", 5),
-            ("bbbee", "BBBEE Verification", "SANAS-accredited agency", None, "Annual (date varies)", 6),
-        ]
-        db.executemany(
-            "INSERT INTO deadlines (dkey, title, authority, due_date, note, sort_order) VALUES (?,?,?,?,?,?)",
-            seed_deadlines,
-        )
-
-    db.commit()
-    db.close()
+    from modules.migrations import migrate
+    migrate(DATABASE, os.path.join(DATA_DIR, "backups"))
+    db = connect_db()
+    try:
+        # WAL lets readers continue while one request writes; it persists in the file.
+        db.execute("PRAGMA journal_mode = WAL")
+        _seed_admin(db)
+        if not db.execute("SELECT COUNT(*) FROM compliance_records").fetchone()[0]:
+            _seed_starter_records(db)
+        db.commit()
+    finally:
+        db.close()
 
 
-# Initialise DB on startup
+# Initialise / migrate the database on startup
 with app.app_context():
     init_db()
 
 
-RACES = ["African", "Coloured", "Indian", "White", "Foreign National"]
-GENDERS = ["Male", "Female"]
-OCC_LEVELS = [
-    "Top Management", "Senior Management", "Professionally Qualified",
-    "Skilled Technical", "Semi-Skilled", "Unskilled", "Non-Permanent"
-]
-PROVINCES = [
-    "Gauteng", "Western Cape", "KwaZulu-Natal", "Eastern Cape",
-    "Limpopo", "Mpumalanga", "North West", "Free State", "Northern Cape"
-]
 SETAS = [
     "AGRISETA", "BANKSETA", "CATHSSETA", "CHIETA", "CETA",
     "ETDP SETA", "FASSET", "FOODBEV", "HWSETA", "INSETA",
@@ -349,39 +283,67 @@ SETAS = [
 ]
 
 
+if os.environ.get("HR_TRUST_PROXY") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 # ─── Audit log ───────────────────────────────────────────────────────────────
 
-def log_action(action, category, detail, target=None, username=None):
-    """Write an entry to the audit log. Never raises into the request flow."""
+def _client_ip():
+    # Behind Coolify's proxy the real client is the first X-Forwarded-For hop
+    # (ProxyFix is applied when HR_TRUST_PROXY=1, so remote_addr is already correct).
+    try:
+        return request.remote_addr
+    except RuntimeError:
+        return None
+
+
+def log_action(action, category, detail, target=None, username=None,
+               entity=None, entity_id=None, before=None, after=None, commit=True):
+    """Append an entry to the audit log.
+
+    Pass commit=False when the audited change is part of a larger transaction, so the
+    change and its audit entry are saved (or rolled back) together. Failures are
+    written to the server log rather than silently dropped."""
+    import json
+    user = g.get("user") if g else None
     try:
         db = get_db()
         db.execute(
-            "INSERT INTO audit_log (username, role, action, category, detail, target) VALUES (?,?,?,?,?,?)",
+            """INSERT INTO audit_log (username, role, action, category, detail, target,
+                                      user_id, ip, entity, entity_id, before_json, after_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                username or session.get("username", "unknown"),
-                session.get("role", "-"),
+                username or (user["username"] if user else session.get("username", "unknown")),
+                user["role"] if user else session.get("role", "-"),
                 action, category, detail, target,
+                user["id"] if user else None,
+                _client_ip(),
+                entity, None if entity_id is None else str(entity_id),
+                json.dumps(before, default=str, ensure_ascii=False) if before is not None else None,
+                json.dumps(after, default=str, ensure_ascii=False) if after is not None else None,
             ),
         )
-        db.commit()
+        if commit:
+            db.commit()
     except Exception:
-        pass
+        log.exception("AUDIT LOG WRITE FAILED: %s / %s / %s", action, category, detail)
 
 
 def friendly_scope(db, module):
-    """Turn a checklist scope like 'gbs:5' into a readable label."""
-    if module == "ee":
-        return "Employment Equity"
-    if module and module.startswith("gbs:"):
+    """Turn a checklist scope like 'record:5' into a readable label."""
+    if module and module.startswith("record:"):
         try:
-            pid = int(module.split(":", 1)[1])
-            row = db.execute("SELECT quarter, year FROM gbs_projects WHERE id=?", (pid,)).fetchone()
+            row = db.execute("SELECT module, period_label FROM compliance_records WHERE id=?",
+                             (int(module.split(":", 1)[1]),)).fetchone()
             if row:
-                return "GBS %s %s" % (row["quarter"], row["year"])
+                from modules.records import module_title
+                return "%s %s" % (module_title(row["module"]), row["period_label"])
         except (ValueError, IndexError):
             pass
     return module
@@ -398,10 +360,13 @@ def resolve_item_text(db, module, item_key):
         except (ValueError, IndexError):
             pass
         return "(custom task)"
-    # Predefined: search the checklist definition for the base module
+    # Predefined: search the checklist definition for the record's module
     from modules.checklists import get_checklist
-    base = module.split(":", 1)[0] if module else module
-    checklist = get_checklist(base)
+    base = module
+    if module and module.startswith("record:"):
+        row = db.execute("SELECT module FROM compliance_records WHERE id=?", (module.split(":", 1)[1],)).fetchone()
+        base = row["module"] if row else None
+    checklist = get_checklist(base) if base else None
     if checklist:
         for step in checklist["steps"]:
             for it in step["items"]:
@@ -413,26 +378,42 @@ def resolve_item_text(db, module, item_key):
 # ─── Trash / purge helpers ───────────────────────────────────────────────────
 
 def purge_expired_projects(db):
-    """Permanently delete trashed projects whose 30-day hold has elapsed."""
+    """Remove trashed GBS projects whose 30-day hold has elapsed. The compliance record
+    behind the project is kept as a deleted tombstone with its full history, so the
+    audit trail and timeline survive; records with submissions, reports or evidence
+    are never purged."""
     now = datetime.now().isoformat(sep=" ", timespec="seconds")
     rows = db.execute(
         "SELECT * FROM gbs_projects WHERE trashed=1 AND purge_at IS NOT NULL AND purge_at <= ?",
         (now,),
     ).fetchall()
+    purged = 0
     for r in rows:
-        scope = "gbs:%d" % r["id"]
+        rid = r["record_id"]
+        if rid and db.execute(
+                "SELECT (SELECT COUNT(*) FROM submissions WHERE record_id=?) + "
+                "(SELECT COUNT(*) FROM report_versions WHERE record_id=?) + "
+                "(SELECT COUNT(*) FROM evidence_files WHERE record_id=?)", (rid, rid, rid)).fetchone()[0]:
+            log_action("trash_purge_blocked", "trash", "Purge skipped: GBS %s %s has evidence" % (r["quarter"], r["year"]),
+                       target="gbs:%d" % r["id"], username="system", commit=False)
+            db.execute("UPDATE gbs_projects SET purge_at=NULL WHERE id=?", (r["id"],))
+            continue
         db.execute("DELETE FROM gbs_projects WHERE id=?", (r["id"],))
-        db.execute("DELETE FROM checklist_state WHERE module=?", (scope,))
-        db.execute("DELETE FROM custom_tasks WHERE module=?", (scope,))
-        db.execute("DELETE FROM hidden_tasks WHERE module=?", (scope,))
+        if rid:
+            scope = "record:%d" % rid
+            db.execute("DELETE FROM checklist_state WHERE module=?", (scope,))
+            db.execute("DELETE FROM custom_tasks WHERE module=?", (scope,))
+            db.execute("DELETE FROM hidden_tasks WHERE module=?", (scope,))
+            db.execute("""INSERT INTO workflow_events (record_id, event, username, comment)
+                          VALUES (?, 'purged', 'system', 'Project data purged after the approved hold')""", (rid,))
         log_action(
             "trash_purge", "trash",
             "Auto-purged after %d-day hold: GBS %s %s" % (PURGE_HOLD_DAYS, r["quarter"], r["year"]),
-            target="gbs:%d" % r["id"], username="system",
+            target="gbs:%d" % r["id"], username="system", commit=False,
         )
-    if rows:
-        db.commit()
-    return len(rows)
+        purged += 1
+    db.commit()
+    return purged
 
 
 # ─── Checklist helpers ───────────────────────────────────────────────────────
@@ -493,38 +474,140 @@ def landing():
     return render_template("landing.html", now=datetime.now)
 
 
+COMMON_PASSWORDS = {
+    "password", "password1", "password123", "123456789012", "qwertyuiop12",
+    "anotherbpo2024", "letmein12345", "welcome12345", "admin1234567", "changeme1234",
+}
+
+
+def password_problem(password, username=""):
+    """Return a reason the password is unacceptable, or None."""
+    if len(password) < 12:
+        return "Password must be at least 12 characters."
+    if len(password) > 256:
+        return "Password is too long."
+    if password.lower() in COMMON_PASSWORDS:
+        return "That password is too common."
+    if username and username.lower() in password.lower():
+        return "Password must not contain the username."
+    if len(set(password)) < 5:
+        return "Password is too repetitive."
+    return None
+
+
+# A real hash of a random value, so a login for an unknown username costs the same
+# time as a wrong password (no account enumeration by timing).
+_DUMMY_HASH = generate_password_hash(secrets.token_hex(16))
+
+
+def _start_session(user, remember):
+    session.clear()  # new session content on every sign-in (no fixation)
+    session["logged_in"] = True
+    session["user_id"] = user["id"]
+    session["session_version"] = user["session_version"]
+    session["username"] = user["username"]
+    session["role"] = user["role"]
+    session["full_name"] = user["full_name"] or user["username"]
+    session["remember"] = remember
+    session.permanent = remember  # remember = 30-day cookie; else browser-session cookie
+    session["last_activity"] = datetime.now().timestamp()
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if session.get("logged_in"):
+    if g.get("user") is not None:
         return redirect(url_for("dashboard"))
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
+        username = request.form.get("username", "").strip()[:150]
         password = request.form.get("password", "")
         db = get_db()
-        user = db.execute(
-            "SELECT * FROM users WHERE username=? AND active=1", (username,)
-        ).fetchone()
-        if user and check_password_hash(user["password_hash"], password):
-            remember = bool(request.form.get("remember"))
-            session["logged_in"] = True
-            session["username"] = user["username"]
-            session["role"] = user["role"]
-            session["full_name"] = user["full_name"] or user["username"]
-            session["remember"] = remember
-            session.permanent = remember  # remember = 30-day cookie; else session cookie
-            session["last_activity"] = datetime.now().timestamp()
-            db.execute(
-                "UPDATE users SET last_login=datetime('now') WHERE id=?", (user["id"],)
-            )
+        user = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        now = datetime.now()
+
+        if user and user["locked_until"] and datetime.fromisoformat(user["locked_until"]) > now:
+            check_password_hash(_DUMMY_HASH, password)
+            log_action("login_locked", "auth", "Sign-in refused: account locked",
+                       target=username, username=username)
+            flash("Invalid username or password, or the account is temporarily locked.", "danger")
+            return render_template("login.html"), 401
+
+        ok = check_password_hash(user["password_hash"] if user else _DUMMY_HASH, password)
+        if user and ok and user["active"]:
+            db.execute("UPDATE users SET last_login=datetime('now'), failed_logins=0, locked_until=NULL "
+                       "WHERE id=?", (user["id"],))
             db.commit()
+            remember = bool(request.form.get("remember"))
+            _start_session(user, remember)
+            g.user = user
             log_action("login", "auth",
                        "Signed in (%s%s)" % (user["role"], ", stay logged in" if remember else ""))
+            if user["must_change_password"]:
+                flash("Please choose a new password before continuing.", "warning")
+                return redirect(url_for("account_password"))
             flash(f"Welcome back, {session['full_name']}!", "success")
             return redirect(url_for("dashboard"))
+
+        if user:
+            fails = (user["failed_logins"] or 0) + 1
+            locked = None
+            if fails >= MAX_FAILED_LOGINS:
+                locked = (now + timedelta(minutes=LOCKOUT_MINUTES)).isoformat(timespec="seconds")
+                fails = 0
+            db.execute("UPDATE users SET failed_logins=?, locked_until=? WHERE id=?",
+                       (fails, locked, user["id"]))
+            db.commit()
+            if locked:
+                log_action("account_locked", "auth",
+                           "Locked for %d minutes after %d failed sign-ins" % (LOCKOUT_MINUTES, MAX_FAILED_LOGINS),
+                           target=username, username=username)
         log_action("login_failed", "auth",
                    "Failed sign-in attempt", target=username, username=username or "unknown")
-        flash("Invalid username or password.", "danger")
+        flash("Invalid username or password, or the account is temporarily locked.", "danger")
+        return render_template("login.html"), 401
     return render_template("login.html")
+
+
+@app.before_request
+def force_password_change():
+    user = g.get("user")
+    if (user is not None and user["must_change_password"]
+            and request.endpoint not in ("account_password", "logout", "static", "session_ping")):
+        return redirect(url_for("account_password"))
+
+
+@app.route("/account/password", methods=["GET", "POST"])
+@login_required
+def account_password():
+    if request.method == "POST":
+        current = request.form.get("current_password", "")
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        user = g.user
+        if not check_password_hash(user["password_hash"], current):
+            flash("Current password is incorrect.", "danger")
+        elif new != confirm:
+            flash("The new passwords do not match.", "danger")
+        elif check_password_hash(user["password_hash"], new):
+            flash("The new password must be different from the current one.", "danger")
+        elif password_problem(new, user["username"]):
+            flash(password_problem(new, user["username"]), "danger")
+        else:
+            db = get_db()
+            db.execute(
+                """UPDATE users SET password_hash=?, must_change_password=0,
+                   password_changed_at=datetime('now'), session_version=session_version+1
+                   WHERE id=?""",
+                (generate_password_hash(new), user["id"]),
+            )
+            log_action("password_change", "auth", "Changed own password",
+                       entity="user", entity_id=user["id"], commit=False)
+            db.commit()
+            # Other sessions for this user are now invalid; keep this one.
+            fresh = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+            _start_session(fresh, session.get("remember", False))
+            flash("Password changed.", "success")
+            return redirect(url_for("dashboard"))
+    return render_template("account_password.html")
 
 
 @app.route("/session/ping", methods=["POST"])
@@ -535,64 +618,85 @@ def session_ping():
     return jsonify({"ok": True})
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
-    timed_out = request.args.get("timeout")
-    if session.get("logged_in"):
+    timed_out = request.form.get("timeout")
+    if g.get("user") is not None:
         log_action("logout", "auth",
-                   "Auto sign-out (1 min inactivity)" if timed_out else "Signed out")
+                   "Auto sign-out (%s inactivity)" % IDLE_LABEL if timed_out else "Signed out")
     session.clear()
     if timed_out:
-        flash("You were signed out after 1 minute of inactivity.", "info")
+        flash("You were signed out after %s of inactivity." % IDLE_LABEL, "info")
         return redirect(url_for("login"))
     flash("You have been logged out.", "info")
     return redirect(url_for("landing"))
 
 
-# ─── Deadlines ───────────────────────────────────────────────────────────────
+# ─── Shared helpers for compliance records ───────────────────────────────────
 
-def _deadline_view(row):
-    """Augment a deadline row with display string, days remaining, and a status class."""
-    d = dict(row)
-    due = d.get("due_date")
-    if due:
-        try:
-            dd = date.fromisoformat(due)
-            days = (dd - date.today()).days
-            d["due_display"] = dd.strftime("%d %b %Y")
-            d["days"] = days
-            if days < 0:
-                d["status_label"] = "Overdue by %d day%s" % (abs(days), "" if abs(days) == 1 else "s")
-                d["status_class"] = "red"
-            elif days == 0:
-                d["status_label"] = "Due today"
-                d["status_class"] = "red"
-            elif days <= 14:
-                d["status_label"] = "In %d day%s" % (days, "" if days == 1 else "s")
-                d["status_class"] = "red"
-            elif days <= 45:
-                d["status_label"] = "In %d days" % days
-                d["status_class"] = "amber"
-            else:
-                d["status_label"] = "In %d days" % days
-                d["status_class"] = "teal"
-            return d
-        except ValueError:
-            pass
-    # No (valid) date → "varies"
-    d["due_display"] = d.get("note") or "Varies"
-    d["days"] = None
-    d["status_label"] = "Varies"
-    d["status_class"] = "grey"
-    return d
+from modules import records as rec
+from modules import reports_store
+from modules.company import FIELDS as COMPANY_FIELDS, ProfileError, current_profile, save_profile
+from modules.employees import (EMPLOYMENT_TYPES, GENDERS, OCC_LEVELS, PROVINCES, RACES, ImportFileError,
+                               error_report_csv, insert_employee, plan_import, template_csv)
+from modules.employees import validate as validate_employee
+from modules.rules import all_rule_sets, get_rule_set, rule_set_by_id, unverified_count
+
+EVIDENCE_KINDS = ["Supporting document", "Submitted report", "Confirmation / acknowledgement", "Receipt",
+                  "Email confirmation", "Proof of payment", "Certificate / letter", "Other"]
+EVIDENCE_TYPES = {  # extension: (mime, magic-bytes check)
+    "pdf": ("application/pdf", lambda b: b.startswith(b"%PDF")),
+    "png": ("image/png", lambda b: b.startswith(b"\x89PNG")),
+    "jpg": ("image/jpeg", lambda b: b.startswith(b"\xff\xd8")),
+    "jpeg": ("image/jpeg", lambda b: b.startswith(b"\xff\xd8")),
+    "xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", lambda b: b.startswith(b"PK")),
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+             lambda b: b.startswith(b"PK")),
+    "csv": ("text/csv", lambda b: b"\x00" not in b[:4096] and not b.startswith(b"PK")),
+    "txt": ("text/plain", lambda b: b"\x00" not in b[:4096] and not b.startswith(b"PK")),
+    "eml": ("message/rfc822", lambda b: b"\x00" not in b[:4096]),
+}
 
 
-def get_deadlines(db):
-    rows = db.execute("SELECT * FROM deadlines").fetchall()
-    items = [_deadline_view(r) for r in rows]
-    # Soonest dated first; undated ("varies") last; tie-break on sort_order
-    items.sort(key=lambda x: (x["days"] is None, x["days"] if x["days"] is not None else 0, x["sort_order"]))
-    return items
+def active_users(db):
+    return db.execute("SELECT id, username, full_name, role FROM users WHERE active=1 ORDER BY full_name").fetchall()
+
+
+def load_record_or_404(db, record_id):
+    r = rec.get_record(db, record_id)
+    if r is None:
+        abort(404, description="That compliance record does not exist.")
+    return r
+
+
+def default_period(module, year, db):
+    rs = get_rule_set(db, "STATUTORY-DEADLINES")
+    return rec.default_period(module, year, rs["params"] if rs else {})
+
+
+def _int_or_none(v):
+    try:
+        return int(v) if v not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def scope_for(record):
+    return "record:%d" % record["id"]
+
+
+def checklist_bundle(db, record):
+    from modules.checklists import get_checklist
+    checklist = get_checklist(record["module"])
+    if not checklist:
+        return None
+    scope = scope_for(record)
+    states = get_checklist_states(db, scope)
+    custom = get_custom_tasks(db, scope)
+    hidden = get_hidden_tasks(db, scope)
+    done, total, pct = checklist_progress(checklist, states, custom, hidden)
+    return {"scope": scope, "checklist": checklist, "states": states, "custom": custom, "hidden": hidden,
+            "done": done, "total": total, "pct": pct, "locked": record["status"] in rec.CHECKLIST_LOCKED}
 
 
 # ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -601,164 +705,665 @@ def get_deadlines(db):
 @login_required
 def dashboard():
     db = get_db()
-    emp_count = db.execute("SELECT COUNT(*) as c FROM employees").fetchone()["c"]
-    training_count = db.execute("SELECT COUNT(*) as c FROM training_records").fetchone()["c"]
-    logs_count = db.execute("SELECT COUNT(*) as c FROM logs_records").fetchone()["c"]
-    bbbee_row = db.execute(
-        "SELECT * FROM bbbee_data ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    deadlines = get_deadlines(db)
+    items = rec.calendar(db)
+    bbbee_level = None
+    latest = db.execute("""SELECT rv.snapshot_json FROM report_versions rv JOIN compliance_records r ON r.id=rv.record_id
+                           WHERE rv.report_type='bbbee_xlsx' AND r.deleted=0 ORDER BY rv.id DESC LIMIT 1""").fetchone()
+    if latest:
+        import json
+        from modules import bbbee as bb
+        try:
+            lvl = bb.calc_from_snapshot(json.loads(latest[0]))["level"]
+            bbbee_level = "Non-compliant" if lvl == "NC" else "Level %s" % lvl
+        except Exception:
+            bbbee_level = None
     return render_template(
         "dashboard.html",
-        emp_count=emp_count,
-        training_count=training_count,
-        logs_count=logs_count,
-        bbbee_row=bbbee_row,
-        deadlines=deadlines,
+        calendar=items,
+        health=rec.health(items),
+        module_status=rec.module_status(items),
+        notices=rec.notifications(db, items, g.user),
+        unverified_rules=unverified_count(db),
+        emp_count=db.execute("SELECT COUNT(*) FROM employees WHERE status='ACTIVE'").fetchone()[0],
+        training_count=db.execute("SELECT COUNT(*) FROM training_records").fetchone()[0],
+        logs_count=db.execute("SELECT COUNT(*) FROM logs_records").fetchone()[0],
+        bbbee_level=bbbee_level,
         current_year=datetime.now().year,
     )
 
 
-@app.route("/deadlines/<int:deadline_id>/update", methods=["POST"])
+# ─── Compliance records ──────────────────────────────────────────────────────
+
+@app.route("/compliance")
 @login_required
-def deadline_update(deadline_id):
+def compliance_list():
     db = get_db()
-    row = db.execute("SELECT * FROM deadlines WHERE id=?", (deadline_id,)).fetchone()
-    if not row:
-        flash("Deadline not found.", "danger")
-        return redirect(url_for("dashboard"))
-    due_date = (request.form.get("due_date") or "").strip() or None
-    note = (request.form.get("note") or "").strip()
-    # Validate date if supplied
-    if due_date:
-        try:
-            date.fromisoformat(due_date)
-        except ValueError:
-            flash("Invalid date. Please use the date picker.", "danger")
-            return redirect(url_for("dashboard"))
-    db.execute(
-        "UPDATE deadlines SET due_date=?, note=?, updated_at=datetime('now') WHERE id=?",
-        (due_date, note, deadline_id),
+    module = request.args.get("module", "")
+    status = request.args.get("status", "")
+    where, params = ["r.deleted=0"], []
+    if module in rec.MODULES:
+        where.append("r.module=?"); params.append(module)
+    if status in rec.STATUS_LABELS:
+        where.append("r.status=?"); params.append(status)
+    rows = db.execute(
+        """SELECT r.*, o.full_name AS owner_name, v.full_name AS reviewer_name
+           FROM compliance_records r LEFT JOIN users o ON o.id=r.owner_id LEFT JOIN users v ON v.id=r.reviewer_id
+           WHERE %s ORDER BY r.period_year DESC, r.module, r.period_label DESC""" % " AND ".join(where),
+        params).fetchall()
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["state"], d["state_label"] = rec.due_state(d)
+        d["title"] = rec.module_title(d["module"])
+        items.append(d)
+    return render_template("compliance_list.html", items=items, modules=rec.MODULES, statuses=rec.STATUS_LABELS,
+                           f_module=module, f_status=status, users=active_users(db),
+                           current_year=date.today().year)
+
+
+@app.route("/compliance/new", methods=["POST"])
+@login_required
+def compliance_new():
+    db = get_db()
+    f = request.form
+    module = f.get("module", "")
+    if module == "gbs":
+        flash("GBS claims are opened from the GBS page (one per quarter).", "info")
+        return redirect(url_for("gbs"))
+    year = _int_or_none(f.get("period_year")) or date.today().year
+    if not 2000 <= year <= 2100:
+        flash("Enter a sensible year.", "danger")
+        return redirect(url_for("compliance_list"))
+    label, start, end, due = default_period(module, year, db)
+    rs = None
+    if module == "ee":
+        rs = get_rule_set(db, "EE-ACT-2025", f.get("period_end") or end)
+    elif module == "coida":
+        rs = get_rule_set(db, "COIDA-ROE", f.get("period_end") or end)
+    try:
+        rid = rec.create_record(
+            db, module, (f.get("period_label") or label).strip(), g.user, period_year=year,
+            period_start=f.get("period_start") or start, period_end=f.get("period_end") or end,
+            due_date=f.get("due_date") or due, owner_id=_int_or_none(f.get("owner_id")),
+            reviewer_id=_int_or_none(f.get("reviewer_id")), rule_set_id=rs["id"] if rs else None,
+            official_source=f.get("official_source") or None)
+        log_action("record_create", "compliance", "Opened %s %s" % (rec.module_title(module), f.get("period_label") or label),
+                   entity="compliance_record", entity_id=rid, commit=False)
+        db.commit()
+    except rec.WorkflowError as e:
+        db.rollback()
+        flash(str(e), "danger")
+        return redirect(url_for("compliance_list"))
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash("A record for that module and period already exists.", "danger")
+        return redirect(url_for("compliance_list"))
+    flash("Compliance record opened.", "success")
+    return redirect(url_for("record_detail", record_id=rid))
+
+
+@app.route("/compliance/<int:record_id>")
+@login_required
+def record_detail(record_id):
+    import json
+    db = get_db()
+    r = load_record_or_404(db, record_id)
+    users = active_users(db)
+    names = {u["id"]: (u["full_name"] or u["username"]) for u in db.execute("SELECT id, full_name, username FROM users")}
+    versions = [dict(v) for v in db.execute(
+        "SELECT id, report_type, version, generated_at, generated_by_name, reason, checks_ok, checks_json, file_name, "
+        "size, sha256, snapshot_sha256, rule_set_id, company_profile_id FROM report_versions WHERE record_id=? "
+        "ORDER BY report_type, version DESC", (record_id,))]
+    for v in versions:
+        v["checks"] = json.loads(v["checks_json"] or "[]")
+        v["label"] = reports_store.REPORT_TYPES[v["report_type"]]["label"]
+    latest_ids = {v["id"] for v in rec.latest_versions(db, record_id).values()}
+    actions = []
+    checks_ok = rec.checks_ok_for(db, r)
+    for a, (froms, to, who, needs_comment, label) in rec.TRANSITIONS.items():
+        ok, why = rec.can_act(r, a, g.user)
+        if ok and checks_ok is False and a in ("prepare", "request_review", "resubmit", "approve", "submit"):
+            ok, why = False, "Generate the required reports and make sure their checks pass first."
+        if r["status"] in froms:
+            actions.append({"action": a, "label": label, "ok": ok, "why": why, "needs_comment": needs_comment})
+    rule = rule_set_by_id(db, r["rule_set_id"]) if r["rule_set_id"] else None
+    gbs_project_id = None
+    if r["module"] == "gbs":
+        p = db.execute("SELECT id FROM gbs_projects WHERE record_id=?", (record_id,)).fetchone()
+        gbs_project_id = p["id"] if p else None
+    return render_template(
+        "record.html", r=r, title=rec.module_title(r["module"]), module=rec.MODULES[r["module"]],
+        status_labels=rec.STATUS_LABELS, editable=r["status"] in rec.EDITABLE and not r["deleted"],
+        state=rec.due_state(r), users=users, names=names, versions=versions, latest_ids=latest_ids,
+        report_types={k: reports_store.REPORT_TYPES[k] for k in rec.MODULES[r["module"]]["reports"]},
+        actions=actions, checks_ok=checks_ok,
+        submissions=db.execute("SELECT * FROM submissions WHERE record_id=? ORDER BY id DESC", (record_id,)).fetchall(),
+        evidence=db.execute("SELECT * FROM evidence_files WHERE record_id=? ORDER BY id DESC", (record_id,)).fetchall(),
+        evidence_kinds=EVIDENCE_KINDS, evidence_exts=sorted(EVIDENCE_TYPES),
+        timeline=rec.timeline(db, record_id), cl=checklist_bundle(db, r), rule=rule,
+        gbs_project_id=gbs_project_id, today=date.today().isoformat(),
     )
+
+
+@app.route("/compliance/<int:record_id>/details", methods=["POST"])
+@login_required
+def record_details(record_id):
+    db = get_db()
+    r = load_record_or_404(db, record_id)
+    f = request.form
+    fields = {k: (f.get(k) or None) for k in ("due_date", "notes", "official_source", "last_reviewed_at",
+                                               "period_start", "period_end") if k in f}
+    for k in ("owner_id", "reviewer_id"):
+        if k in f:
+            fields[k] = _int_or_none(f.get(k))
+            if fields[k] and not db.execute("SELECT 1 FROM users WHERE id=? AND active=1", (fields[k],)).fetchone():
+                flash("Choose an active user.", "danger")
+                return redirect(url_for("record_detail", record_id=record_id))
+    try:
+        changes = rec.update_details(db, r, g.user, _int_or_none(f.get("row_version")) or -1, **fields)
+        if changes:
+            log_action("record_update", "compliance", "Updated %s %s: %s" % (
+                rec.module_title(r["module"]), r["period_label"], ", ".join(sorted(changes))),
+                entity="compliance_record", entity_id=record_id,
+                before={k: r.get(k) for k in changes}, after=changes, commit=False)
+        db.commit()
+        flash("Saved." if changes else "No changes.", "success" if changes else "info")
+    except rec.WorkflowError as e:
+        db.rollback()
+        flash(str(e), "danger")
+    return redirect(url_for("record_detail", record_id=record_id))
+
+
+@app.route("/compliance/<int:record_id>/transition", methods=["POST"])
+@login_required
+def record_transition(record_id):
+    db = get_db()
+    r = load_record_or_404(db, record_id)
+    f = request.form
+    action = f.get("action", "")
+    try:
+        payload = None
+        if action == "submit":
+            submitted_on = (f.get("submitted_on") or "").strip()
+            try:
+                if date.fromisoformat(submitted_on) > date.today():
+                    raise rec.WorkflowError("Submission date cannot be in the future.")
+            except ValueError:
+                raise rec.WorkflowError("Enter the date the submission was made.")
+            ref = (f.get("reference_no") or "").strip()[:100]
+            if not ref:
+                raise rec.WorkflowError("Enter the submission reference number.")
+            latest = rec.latest_versions(db, record_id)
+            cl = checklist_bundle(db, r)
+            payload = {"report_versions": {k: {"id": v["id"], "version": v["version"], "sha256": v["sha256"]}
+                                           for k, v in latest.items()},
+                       "checklist": ({"done": cl["done"], "total": cl["total"],
+                                      "states": cl["states"]} if cl else None)}
+        to = rec.transition(db, record_id, action, g.user, comment=f.get("comment"),
+                            checks_ok=rec.checks_ok_for(db, r), override_reason=f.get("override_reason"),
+                            payload=payload, expected_version=_int_or_none(f.get("row_version")))
+        if action == "submit":
+            db.execute(
+                """INSERT INTO submissions (record_id, report_version_ids, submitted_on, submitted_by_name,
+                       reference_no, confirmation_no, notes, recorded_by) VALUES (?,?,?,?,?,?,?,?)""",
+                (record_id, ",".join(str(v["id"]) for v in payload["report_versions"].values()), submitted_on,
+                 (f.get("submitted_by_name") or g.user["full_name"] or g.user["username"])[:120], ref,
+                 (f.get("confirmation_no") or "").strip()[:100] or None, (f.get("notes") or "").strip()[:2000] or None,
+                 g.user["id"]))
+        if r["module"] == "gbs":  # keep the GBS project list status in step with the workflow
+            db.execute("UPDATE gbs_projects SET status=?, submitted_at=?, updated_at=datetime('now') WHERE record_id=?",
+                       ("Submitted" if to in rec.DONE else "In Progress",
+                        datetime.now().isoformat(sep=" ", timespec="seconds") if to == "SUBMITTED" else None,
+                        record_id))
+        log_action("record_" + action, "compliance", "%s %s: %s → %s" % (
+            rec.module_title(r["module"]), r["period_label"], rec.STATUS_LABELS[r["status"]], rec.STATUS_LABELS[to]),
+            entity="compliance_record", entity_id=record_id, before={"status": r["status"]}, after={"status": to},
+            commit=False)
+        db.commit()
+        flash("%s %s is now %s." % (rec.module_title(r["module"]), r["period_label"], rec.STATUS_LABELS[to]), "success")
+    except rec.WorkflowError as e:
+        db.rollback()
+        log_action("record_action_refused", "compliance", "Refused '%s' on %s %s: %s" % (
+            action, rec.module_title(r["module"]), r["period_label"], e), entity="compliance_record",
+            entity_id=record_id)
+        flash(str(e), "danger")
+    return redirect(url_for("record_detail", record_id=record_id))
+
+
+@app.route("/compliance/<int:record_id>/generate", methods=["POST"])
+@login_required
+def record_generate(record_id):
+    db = get_db()
+    r = load_record_or_404(db, record_id)
+    report_type = request.form.get("report_type", "")
+    if r["deleted"] or r["status"] not in rec.EDITABLE:
+        flash("Reports can only be generated while the record is Draft, Prepared or Requires changes. "
+              "Submitted reports are frozen.", "danger")
+        return redirect(url_for("record_detail", record_id=record_id))
+    try:
+        vid, version, checks = reports_store.generate_version(db, DATA_DIR, r, report_type, g.user,
+                                                              request.form.get("reason"))
+        rec.add_event(db, record_id, "report_generated", g.user,
+                      comment="%s version %d%s" % (reports_store.REPORT_TYPES[report_type]["label"], version,
+                                                    "" if all(c["ok"] for c in checks) else " — CHECKS FAILED"),
+                      payload={"report_version_id": vid, "reason": request.form.get("reason")})
+        log_action("report_generate", "report", "Generated %s v%d for %s %s" % (
+            report_type, version, rec.module_title(r["module"]), r["period_label"]),
+            entity="report_version", entity_id=vid, commit=False)
+        db.commit()
+    except reports_store.ReportError as e:
+        db.rollback()
+        flash(str(e), "danger")
+        return redirect(url_for("record_detail", record_id=record_id))
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash("Someone generated the same report at the same moment. Nothing was overwritten — refresh to see "
+              "the latest version.", "warning")
+        return redirect(url_for("record_detail", record_id=record_id) + "#reports")
+    failed = [c for c in checks if not c["ok"]]
+    if failed:
+        flash("Version %d generated, but %d check(s) failed: %s. It cannot be approved until fixed."
+              % (version, len(failed), "; ".join(c["check"] for c in failed[:3])), "warning")
+    else:
+        flash("Version %d generated. All checks passed." % version, "success")
+    return redirect(url_for("record_detail", record_id=record_id) + "#reports")
+
+
+@app.route("/reports/<int:version_id>/download")
+@login_required
+def report_download(version_id):
+    db = get_db()
+    v = reports_store.get_version(db, version_id)
+    if v is None:
+        abort(404)
+    try:
+        data = reports_store.read_file(DATA_DIR, v)
+    except (OSError, reports_store.ReportError) as e:
+        log.error("Report file problem for version %s: %s", version_id, e)
+        flash("The stored file for this report is missing or damaged. Restore it from backup.", "danger")
+        return redirect(url_for("record_detail", record_id=v["record_id"]))
+    log_action("report_download", "report", "Downloaded %s" % v["file_name"], entity="report_version",
+               entity_id=version_id)
+    return send_file(io.BytesIO(data), mimetype=v["mime"], as_attachment=True, download_name=v["file_name"])
+
+
+def _content_signature(mime, data):
+    """Comparable content of a generated file (values, not zip timestamps)."""
+    if mime == reports_store.XLSX:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        return [(ws.title, [[c.value for c in row] for row in ws.iter_rows()]) for ws in wb.worksheets]
+    if mime == reports_store.DOCX:
+        from docx import Document
+        doc = Document(io.BytesIO(data))
+        return ([p.text for p in doc.paragraphs],
+                [[[c.text for c in row.cells] for row in t.rows] for t in doc.tables])
+    return data
+
+
+@app.route("/reports/<int:version_id>/verify", methods=["POST"])
+@login_required
+def report_verify(version_id):
+    db = get_db()
+    v = reports_store.get_version(db, version_id)
+    if v is None:
+        abort(404)
+    try:
+        stored = reports_store.read_file(DATA_DIR, v)
+        again = reports_store.rerender(db, v)
+        same = _content_signature(v["mime"], stored) == _content_signature(v["mime"], again)
+    except (OSError, reports_store.ReportError) as e:
+        flash("Verification failed: %s" % e, "danger")
+        same = None
+    if same:
+        flash("Verified: %s re-created from its stored source data matches the stored file, and the file's "
+              "fingerprint is intact." % v["file_name"], "success")
+    elif same is False:
+        flash("MISMATCH: re-creating %s from its stored data does not match the stored file." % v["file_name"], "danger")
+    log_action("report_verify", "report", "Verified %s: %s" % (v["file_name"], {True: "match", False: "MISMATCH", None: "error"}[same]),
+               entity="report_version", entity_id=version_id)
+    return redirect(url_for("record_detail", record_id=v["record_id"]) + "#reports")
+
+
+@app.route("/compliance/<int:record_id>/evidence", methods=["POST"])
+@login_required
+def record_evidence(record_id):
+    import hashlib
+    import uuid
+    db = get_db()
+    r = load_record_or_404(db, record_id)
+    if r["deleted"] or r["status"] == "ARCHIVED":
+        flash("Evidence cannot be added to an archived or deleted record.", "danger")
+        return redirect(url_for("record_detail", record_id=record_id))
+    f = request.files.get("file")
+    kind = request.form.get("kind", "")
+    if kind not in EVIDENCE_KINDS:
+        flash("Choose what kind of evidence this is.", "danger")
+        return redirect(url_for("record_detail", record_id=record_id) + "#evidence")
+    if not f or not f.filename:
+        flash("Choose a file.", "danger")
+        return redirect(url_for("record_detail", record_id=record_id) + "#evidence")
+    original = os.path.basename(f.filename.replace("\\", "/"))[:200]
+    ext = original.rsplit(".", 1)[-1].lower() if "." in original else ""
+    data = f.read()
+    spec = EVIDENCE_TYPES.get(ext)
+    if spec is None or not data or not spec[1](data):
+        log_action("evidence_rejected", "compliance", "Rejected upload '%s' (type/content not allowed)" % original,
+                   entity="compliance_record", entity_id=record_id)
+        flash("That file type is not allowed, or the content does not match its extension. Allowed: %s."
+              % ", ".join(sorted(EVIDENCE_TYPES)), "danger")
+        return redirect(url_for("record_detail", record_id=record_id) + "#evidence")
+    folder = os.path.join(DATA_DIR, "evidence")
+    os.makedirs(folder, exist_ok=True)
+    stored = "%s.%s" % (uuid.uuid4().hex, ext)
+    with open(os.path.join(folder, stored), "wb") as fh:
+        fh.write(data)
+    try:
+        cur = db.execute(
+            """INSERT INTO evidence_files (record_id, kind, description, original_name, stored_name, mime, size,
+                   sha256, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (record_id, kind, (request.form.get("description") or "").strip()[:300] or None, original, stored,
+             spec[0], len(data), hashlib.sha256(data).hexdigest(), g.user["id"]))
+        rec.add_event(db, record_id, "evidence_added", g.user, comment="%s: %s" % (kind, original),
+                      payload={"evidence_id": cur.lastrowid})
+        log_action("evidence_upload", "compliance", "Added evidence '%s' to %s %s" % (
+            original, rec.module_title(r["module"]), r["period_label"]), entity="evidence", entity_id=cur.lastrowid,
+            commit=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        os.remove(os.path.join(folder, stored))
+        raise
+    flash("Evidence added.", "success")
+    return redirect(url_for("record_detail", record_id=record_id) + "#evidence")
+
+
+@app.route("/evidence/<int:evidence_id>")
+@login_required
+def evidence_download(evidence_id):
+    import hashlib
+    db = get_db()
+    e = db.execute("SELECT * FROM evidence_files WHERE id=?", (evidence_id,)).fetchone()
+    if e is None:
+        abort(404)
+    path = os.path.join(DATA_DIR, "evidence", os.path.basename(e["stored_name"]))
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        flash("The evidence file is missing. Restore it from backup.", "danger")
+        return redirect(url_for("record_detail", record_id=e["record_id"]))
+    if hashlib.sha256(data).hexdigest() != e["sha256"]:
+        flash("The evidence file does not match its recorded fingerprint. Restore it from backup.", "danger")
+        return redirect(url_for("record_detail", record_id=e["record_id"]))
+    log_action("evidence_download", "compliance", "Downloaded evidence '%s'" % e["original_name"],
+               entity="evidence", entity_id=evidence_id)
+    return send_file(io.BytesIO(data), mimetype=e["mime"], as_attachment=True, download_name=e["original_name"])
+
+
+# ─── Company profile ─────────────────────────────────────────────────────────
+
+@app.route("/company", methods=["GET", "POST"])
+@login_required
+def company():
+    db = get_db()
+    if request.method == "POST":
+        try:
+            pid, diff = save_profile(db, {k: request.form.get(k) for k, _l, _g in COMPANY_FIELDS if k in request.form},
+                                     g.user["id"])
+            if diff:
+                log_action("company_update", "company", "Company profile updated (version %d): %s"
+                           % (pid, ", ".join(sorted(diff))), entity="company_profile", entity_id=pid,
+                           before={k: v[0] for k, v in diff.items()}, after={k: v[1] for k, v in diff.items()},
+                           commit=False)
+            db.commit()
+            flash("Company profile saved as a new version. Reports already generated keep the version they used."
+                  if diff else "No changes.", "success" if diff else "info")
+        except ProfileError as e:
+            db.rollback()
+            flash(str(e), "danger")
+        return redirect(url_for("company"))
+    history = db.execute("""SELECT p.id, p.created_at, u.full_name AS by_name FROM company_profiles p
+                            LEFT JOIN users u ON u.id=p.created_by ORDER BY p.id DESC LIMIT 20""").fetchall()
+    groups = []
+    for col, label, grp in COMPANY_FIELDS:
+        if not groups or groups[-1][0] != grp:
+            groups.append((grp, []))
+        groups[-1][1].append((col, label))
+    return render_template("company.html", profile=current_profile(db), groups=groups, history=history,
+                           setas=SETAS)
+
+
+# ─── Regulatory rules register ───────────────────────────────────────────────
+
+@app.route("/rules")
+@login_required
+def rules_register():
+    import json
+    db = get_db()
+    sets = all_rule_sets(db)
+    for s in sets:
+        s["params_pretty"] = json.dumps(s["params"], indent=2, ensure_ascii=False)
+        s["used"] = db.execute("SELECT COUNT(*) FROM report_versions WHERE rule_set_id=?", (s["id"],)).fetchone()[0]
+    return render_template("rules.html", sets=sets, today=date.today().isoformat())
+
+
+@app.route("/rules/<int:rule_id>/review", methods=["POST"])
+@admin_required
+def rules_review(rule_id):
+    db = get_db()
+    rs = rule_set_by_id(db, rule_id)
+    if rs is None:
+        abort(404)
+    f = request.form
+    vals = {}
+    for k in ("last_reviewed", "next_review", "verified_at"):
+        v = (f.get(k) or "").strip() or None
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                flash("Invalid date.", "danger")
+                return redirect(url_for("rules_register"))
+        vals[k] = v
+    vals["verified_by"] = (f.get("verified_by") or "").strip()[:120] or None
+    if vals["verified_at"] and not vals["verified_by"]:
+        flash("Record who verified the rule set.", "danger")
+        return redirect(url_for("rules_register"))
+    vals["notes"] = (f.get("notes") or rs["notes"] or "").strip()[:4000]
+    db.execute("UPDATE rule_sets SET last_reviewed=?, next_review=?, verified_at=?, verified_by=?, notes=? WHERE id=?",
+               (vals["last_reviewed"], vals["next_review"], vals["verified_at"], vals["verified_by"], vals["notes"],
+                rule_id))
+    log_action("rule_review", "rules", "Reviewed rule set %s v%s%s" % (
+        rs["code"], rs["version"], " — VERIFIED by %s" % vals["verified_by"] if vals["verified_at"] else ""),
+        entity="rule_set", entity_id=rule_id,
+        before={k: rs.get(k) for k in vals}, after=vals, commit=False)
     db.commit()
-    log_action("deadline_update", "deadline",
-               "Set %s due date to %s" % (row["title"], due_date or "(varies)"),
-               target=row["dkey"])
-    flash("Deadline updated.", "success")
-    return redirect(url_for("dashboard"))
+    flash("Rule set review saved.", "success")
+    return redirect(url_for("rules_register"))
+
+
+@app.route("/rules/<int:rule_id>/new-version", methods=["POST"])
+@admin_required
+def rules_new_version(rule_id):
+    import json
+    db = get_db()
+    rs = rule_set_by_id(db, rule_id)
+    if rs is None:
+        abort(404)
+    f = request.form
+    version = (f.get("version") or "").strip()[:30]
+    eff = (f.get("effective_from") or "").strip()
+    try:
+        date.fromisoformat(eff)
+        params = json.loads(f.get("params_json") or "")
+        if not isinstance(params, dict):
+            raise ValueError
+    except ValueError:
+        flash("Give a valid effective date and valid JSON parameters.", "danger")
+        return redirect(url_for("rules_register"))
+    if not version:
+        flash("Give the new version a name.", "danger")
+        return redirect(url_for("rules_register"))
+    try:
+        cur = db.execute(
+            """INSERT INTO rule_sets (module, code, version, regulator, source_document, source_url, effective_from,
+                   params_json, notes) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (rs["module"], rs["code"], version, (f.get("regulator") or rs["regulator"]),
+             (f.get("source_document") or rs["source_document"]), (f.get("source_url") or rs["source_url"]),
+             eff, json.dumps(params), (f.get("notes") or "").strip() or None))
+        db.execute("UPDATE rule_sets SET superseded_by=? WHERE id=?", (cur.lastrowid, rule_id))
+        log_action("rule_new_version", "rules", "Added %s version %s effective %s (supersedes v%s)" % (
+            rs["code"], version, eff, rs["version"]), entity="rule_set", entity_id=cur.lastrowid,
+            before={"params": rs["params"]}, after={"params": params}, commit=False)
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash("That version name already exists for %s." % rs["code"], "danger")
+        return redirect(url_for("rules_register"))
+    flash("New rule-set version added. Periods ending on or after %s will use it for new reports; existing "
+          "reports keep the version they were generated with." % eff, "success")
+    return redirect(url_for("rules_register"))
 
 
 # ─── Employees ───────────────────────────────────────────────────────────────
+
+EMP_SORTS = {"name": "last_name, first_name", "number": "emp_number", "level": "occupational_level, last_name",
+             "start": "employment_date DESC", "status": "status, last_name"}
+EMP_AUDIT_FIELDS = ["emp_number", "first_name", "last_name", "id_number", "race", "gender", "disability",
+                    "is_foreign_national", "nationality", "occupational_level", "employment_type", "department",
+                    "job_title", "salary", "employment_date", "termination_date", "province", "coida_class_code",
+                    "coida_subclass", "status"]
+
+
+def _emp_form_raw(form):
+    return {k: form.get(k) for k in ("emp_number", "first_name", "last_name", "id_number", "race", "gender",
+                                     "disability", "is_foreign_national", "nationality", "occupational_level",
+                                     "employment_type", "department", "job_title", "salary", "employment_date",
+                                     "termination_date", "province", "coida_class_code", "coida_subclass")}
+
+
+def _employee_page(db, edit_emp=None, form_values=None, errors=None):
+    q = (request.args.get("q") or "").strip()[:100]
+    status = request.args.get("status", "ACTIVE")
+    level = request.args.get("level", "")
+    sort = request.args.get("sort", "name")
+    page = max(1, _int_or_none(request.args.get("page")) or 1)
+    per = 50
+    where, params = [], []
+    if status in ("ACTIVE", "TERMINATED", "ARCHIVED"):
+        where.append("status=?"); params.append(status)
+    if level in OCC_LEVELS:
+        where.append("occupational_level=?"); params.append(level)
+    if q:
+        like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(first_name LIKE ? ESCAPE '\\' OR last_name LIKE ? ESCAPE '\\' OR emp_number LIKE ? ESCAPE '\\' "
+                     "OR department LIKE ? ESCAPE '\\' OR job_title LIKE ? ESCAPE '\\')")
+        params += [like] * 5
+    wsql = (" WHERE " + " AND ".join(where)) if where else ""
+    total = db.execute("SELECT COUNT(*) FROM employees" + wsql, params).fetchone()[0]
+    rows = db.execute("SELECT * FROM employees%s ORDER BY %s LIMIT ? OFFSET ?" % (wsql, EMP_SORTS.get(sort, EMP_SORTS["name"])),
+                      params + [per, (page - 1) * per]).fetchall()
+    counts = {s: c for s, c in db.execute("SELECT status, COUNT(*) FROM employees GROUP BY status")}
+    return render_template(
+        "employees.html", employees=rows, total=total, page=page, pages=max(1, (total + per - 1) // per),
+        q=q, f_status=status, f_level=level, sort=sort, counts=counts, edit_emp=edit_emp,
+        form_values=form_values or {}, form_errors=errors or [],
+        races=RACES, genders=GENDERS, occ_levels=OCC_LEVELS, provinces=PROVINCES, employment_types=EMPLOYMENT_TYPES,
+        import_result=session.pop("import_result", None),
+    )
+
 
 @app.route("/employees", methods=["GET", "POST"])
 @login_required
 def employees():
     db = get_db()
     if request.method == "POST":
-        data = request.form
-        db.execute(
-            """INSERT INTO employees
-               (emp_number, first_name, last_name, id_number, race, gender,
-                disability, occupational_level, department, job_title, salary,
-                employment_date, province, nationality, coida_class_code, coida_subclass)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                data.get("emp_number"), data.get("first_name"), data.get("last_name"),
-                data.get("id_number"), data.get("race"), data.get("gender"),
-                data.get("disability", "No"), data.get("occupational_level"),
-                data.get("department"), data.get("job_title"),
-                data.get("salary") or None, data.get("employment_date"),
-                data.get("province"), data.get("nationality"),
-                data.get("coida_class_code"), data.get("coida_subclass"),
-            ),
-        )
+        clean, errors, warnings = validate_employee(_emp_form_raw(request.form))
+        if not errors and db.execute("SELECT 1 FROM employees WHERE emp_number=?", (clean["emp_number"],)).fetchone():
+            errors.append("Employee number %s already exists." % clean["emp_number"])
+        if errors:
+            for e in errors:
+                flash(e, "danger")
+            return _employee_page(db, form_values=request.form, errors=errors), 400
+        emp_id = insert_employee(db, clean, g.user["id"])
+        log_action("employee_create", "employee", "Added employee %s" % clean["emp_number"], entity="employee",
+                   entity_id=emp_id, after={k: clean.get(k) for k in EMP_AUDIT_FIELDS if k in clean}, commit=False)
         db.commit()
-        flash("Employee added successfully.", "success")
+        for w in warnings:
+            flash(w, "warning")
+        flash("Employee added.", "success")
         return redirect(url_for("employees"))
-
-    all_employees = db.execute(
-        "SELECT * FROM employees ORDER BY last_name, first_name"
-    ).fetchall()
-    return render_template(
-        "employees.html",
-        employees=all_employees,
-        races=RACES,
-        genders=GENDERS,
-        occ_levels=OCC_LEVELS,
-        provinces=PROVINCES,
-    )
+    return _employee_page(db)
 
 
 @app.route("/employees/upload", methods=["POST"])
 @login_required
 def employees_upload():
+    import uuid
     db = get_db()
-    if "file" not in request.files:
+    f = request.files.get("file")
+    if not f or not f.filename:
         flash("No file selected.", "danger")
         return redirect(url_for("employees"))
-    f = request.files["file"]
-    if f.filename == "" or not allowed_file(f.filename):
-        flash("Invalid file. Use CSV or Excel.", "danger")
-        return redirect(url_for("employees"))
-
-    filename = secure_filename(f.filename)
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    f.save(filepath)
-
-    rows_added = 0
+    name = os.path.basename(f.filename.replace("\\", "/"))
     try:
-        ext = filename.rsplit(".", 1)[1].lower()
-        if ext == "csv":
-            with open(filepath, newline="", encoding="utf-8-sig") as fh:
-                reader = csv.DictReader(fh)
-                for row in reader:
-                    _insert_employee_row(db, row)
-                    rows_added += 1
-        else:
-            import openpyxl
-            wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
-            ws = wb.active
-            headers = [str(c.value).strip() if c.value else "" for c in next(ws.iter_rows(min_row=1, max_row=1))]
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                if not any(row):
-                    continue
-                rowdict = dict(zip(headers, row))
-                _insert_employee_row(db, rowdict)
-                rows_added += 1
+        result = plan_import(db, name, f.read())
+    except ImportFileError as e:
+        log_action("employee_import_rejected", "employee", "Rejected import file '%s': %s" % (name[:80], e))
+        flash("Import refused: %s Nothing was imported." % e, "danger")
+        return redirect(url_for("employees"))
+    summary = {k: result[k] for k in ("processed", "valid", "failed", "duplicates")}
+    summary["warnings"] = len(result["warnings"])
+    summary["unknown_columns"] = result["unknown_columns"][:10]
+    if result["problems"] or result["warnings"]:
+        folder = os.path.join(DATA_DIR, "import_reports")
+        os.makedirs(folder, exist_ok=True)
+        for old in os.listdir(folder):  # keep this folder small: reports older than a day go
+            p = os.path.join(folder, old)
+            if os.path.getmtime(p) < datetime.now().timestamp() - 86400:
+                os.remove(p)
+        token = uuid.uuid4().hex
+        with open(os.path.join(folder, token + ".csv"), "wb") as fh:
+            fh.write(error_report_csv(result))
+        summary["report_token"] = token
+        session["import_report_token"] = token
+        summary["problems"] = [{"row": p["row"], "emp_number": p["emp_number"], "errors": p["errors"][:3]}
+                               for p in result["problems"][:15]]
+    if not result["ok"]:
+        summary["imported"] = 0
+        log_action("employee_import_failed", "employee", "Import of '%s' refused: %d of %d rows invalid" % (
+            name[:80], result["failed"], result["processed"]), after=summary)
+        session["import_result"] = summary
+        flash("Import refused: %d of %d rows have problems. Nothing was imported. Fix the rows listed below and "
+              "upload again." % (result["failed"], result["processed"]), "danger")
+        return redirect(url_for("employees"))
+    try:
+        for clean in result["rows"]:
+            insert_employee(db, clean, g.user["id"])
+        summary["imported"] = len(result["rows"])
+        log_action("employee_import", "employee", "Imported %d employees from '%s'" % (len(result["rows"]), name[:80]),
+                   after=summary, commit=False)
         db.commit()
-        flash(f"{rows_added} employee(s) imported successfully.", "success")
-    except Exception as e:
-        flash(f"Import error: {e}", "danger")
-
+    except sqlite3.Error:
+        db.rollback()
+        log.exception("Employee import failed during insert")
+        flash("Import failed while saving and was rolled back. Nothing was imported.", "danger")
+        return redirect(url_for("employees"))
+    session["import_result"] = summary
+    flash("%d employee(s) imported." % len(result["rows"]), "success")
     return redirect(url_for("employees"))
 
 
-def _insert_employee_row(db, row):
-    db.execute(
-        """INSERT INTO employees
-           (emp_number, first_name, last_name, id_number, race, gender,
-            disability, occupational_level, department, job_title, salary,
-            employment_date, province, nationality, coida_class_code, coida_subclass)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            row.get("emp_number") or row.get("Emp Number"),
-            row.get("first_name") or row.get("First Name"),
-            row.get("last_name") or row.get("Last Name"),
-            row.get("id_number") or row.get("ID Number"),
-            row.get("race") or row.get("Race"),
-            row.get("gender") or row.get("Gender"),
-            row.get("disability") or row.get("Disability") or "No",
-            row.get("occupational_level") or row.get("Occupational Level"),
-            row.get("department") or row.get("Department"),
-            row.get("job_title") or row.get("Job Title"),
-            row.get("salary") or row.get("Salary"),
-            row.get("employment_date") or row.get("Employment Date"),
-            row.get("province") or row.get("Province"),
-            row.get("nationality") or row.get("Nationality"),
-            row.get("coida_class_code") or row.get("COIDA Class"),
-            row.get("coida_subclass") or row.get("COIDA Subclass"),
-        ),
-    )
+@app.route("/employees/import-report/<token>")
+@login_required
+def employees_import_report(token):
+    if token != session.get("import_report_token") or not token.isalnum():
+        abort(404)
+    path = os.path.join(DATA_DIR, "import_reports", token + ".csv")
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, mimetype="text/csv", as_attachment=True, download_name="import_problems.csv")
 
 
 @app.route("/employees/<int:emp_id>/edit", methods=["GET", "POST"])
@@ -769,172 +1374,206 @@ def edit_employee(emp_id):
     if emp is None:
         flash("Employee not found.", "danger")
         return redirect(url_for("employees"))
-
     if request.method == "POST":
-        data = request.form
-        db.execute(
-            """UPDATE employees SET
-               emp_number=?, first_name=?, last_name=?, id_number=?, race=?,
-               gender=?, disability=?, occupational_level=?, department=?,
-               job_title=?, salary=?, employment_date=?, province=?,
-               nationality=?, coida_class_code=?, coida_subclass=?
-               WHERE id=?""",
-            (
-                data.get("emp_number"), data.get("first_name"), data.get("last_name"),
-                data.get("id_number"), data.get("race"), data.get("gender"),
-                data.get("disability", "No"), data.get("occupational_level"),
-                data.get("department"), data.get("job_title"),
-                data.get("salary") or None, data.get("employment_date"),
-                data.get("province"), data.get("nationality"),
-                data.get("coida_class_code"), data.get("coida_subclass"),
-                emp_id,
-            ),
-        )
+        if emp["status"] == "ARCHIVED":
+            flash("Archived employees cannot be edited. Reactivate first.", "danger")
+            return redirect(url_for("edit_employee", emp_id=emp_id))
+        raw = _emp_form_raw(request.form)
+        if emp["status"] == "TERMINATED" and not raw.get("termination_date"):
+            raw["termination_date"] = emp["termination_date"]
+        clean, errors, warnings = validate_employee(raw)
+        if not errors and clean["emp_number"] != emp["emp_number"] and db.execute(
+                "SELECT 1 FROM employees WHERE emp_number=? AND id<>?", (clean["emp_number"], emp_id)).fetchone():
+            errors.append("Employee number %s already exists." % clean["emp_number"])
+        if errors:
+            for e in errors:
+                flash(e, "danger")
+            return _employee_page(db, edit_emp=emp, form_values=request.form, errors=errors), 400
+        clean["status"] = "TERMINATED" if clean.get("termination_date") else "ACTIVE"
+        before = {k: emp[k] for k in EMP_AUDIT_FIELDS}
+        changed = {k: clean[k] for k in clean if k in before and clean[k] != before[k]}
+        if not changed:
+            flash("No changes.", "info")
+            return redirect(url_for("employees"))
+        sets = ", ".join("%s=?" % k for k in changed)
+        cur = db.execute("UPDATE employees SET %s, updated_at=datetime('now'), updated_by=?, row_version=row_version+1 "
+                         "WHERE id=? AND row_version=?" % sets,
+                         list(changed.values()) + [g.user["id"], emp_id, _int_or_none(request.form.get("row_version")) or -1])
+        if cur.rowcount != 1:
+            db.rollback()
+            flash("Someone else changed this employee while you were editing. Your changes were NOT saved — "
+                  "reload and apply them again.", "danger")
+            return redirect(url_for("edit_employee", emp_id=emp_id))
+        log_action("employee_update", "employee", "Edited employee %s: %s" % (emp["emp_number"], ", ".join(sorted(changed))),
+                   entity="employee", entity_id=emp_id, before={k: before[k] for k in changed}, after=changed,
+                   commit=False)
         db.commit()
+        for w in warnings:
+            flash(w, "warning")
         flash("Employee updated.", "success")
         return redirect(url_for("employees"))
+    return _employee_page(db, edit_emp=emp)
 
-    return render_template(
-        "employees.html",
-        edit_emp=emp,
-        employees=db.execute("SELECT * FROM employees ORDER BY last_name").fetchall(),
-        races=RACES,
-        genders=GENDERS,
-        occ_levels=OCC_LEVELS,
-        provinces=PROVINCES,
-    )
+
+@app.route("/employees/<int:emp_id>/lifecycle", methods=["POST"])
+@login_required
+def employee_lifecycle(emp_id):
+    db = get_db()
+    emp = db.execute("SELECT * FROM employees WHERE id=?", (emp_id,)).fetchone()
+    if emp is None:
+        abort(404)
+    action = request.form.get("action")
+    rv = _int_or_none(request.form.get("row_version")) or -1
+    if action == "terminate":
+        if emp["status"] != "ACTIVE":
+            flash("Only active employees can be terminated.", "danger")
+            return redirect(url_for("employees"))
+        d = (request.form.get("termination_date") or "").strip()
+        try:
+            dd = date.fromisoformat(d)
+        except ValueError:
+            flash("Enter the termination date.", "danger")
+            return redirect(url_for("edit_employee", emp_id=emp_id))
+        if dd > date.today() or (emp["employment_date"] and d < emp["employment_date"]):
+            flash("Termination date must be between the employment date and today.", "danger")
+            return redirect(url_for("edit_employee", emp_id=emp_id))
+        new = {"status": "TERMINATED", "termination_date": d,
+               "termination_reason": (request.form.get("termination_reason") or "").strip()[:200] or None}
+    elif action == "archive":
+        if emp["status"] != "TERMINATED":
+            flash("Terminate the employee before archiving.", "danger")
+            return redirect(url_for("employees"))
+        new = {"status": "ARCHIVED", "archived_at": datetime.now().isoformat(sep=" ", timespec="seconds")}
+    elif action == "reactivate":
+        if emp["status"] == "ACTIVE":
+            return redirect(url_for("employees"))
+        new = {"status": "ACTIVE", "termination_date": None, "termination_reason": None, "archived_at": None}
+    else:
+        abort(400)
+    sets = ", ".join("%s=?" % k for k in new)
+    cur = db.execute("UPDATE employees SET %s, updated_at=datetime('now'), updated_by=?, row_version=row_version+1 "
+                     "WHERE id=? AND row_version=?" % sets, list(new.values()) + [g.user["id"], emp_id, rv])
+    if cur.rowcount != 1:
+        db.rollback()
+        flash("This employee was changed by someone else. Reload and try again.", "danger")
+        return redirect(url_for("employees"))
+    log_action("employee_" + action, "employee", "%s employee %s" % (action.capitalize(), emp["emp_number"]),
+               entity="employee", entity_id=emp_id, before={k: emp[k] for k in new}, after=new, commit=False)
+    db.commit()
+    flash("Employee %s %s." % (emp["emp_number"], {"terminate": "terminated", "archive": "archived",
+                                                     "reactivate": "reactivated"}[action]), "success")
+    return redirect(url_for("employees", status=new["status"]))
+
+
+@app.route("/employees/<int:emp_id>/export")
+@admin_required
+def employee_export(emp_id):
+    """Everything the system holds about one employee (POPIA access request):
+    register data, training, COIDA earnings, the stored report versions whose frozen
+    data includes them, and the audit trail of changes to their record."""
+    import json
+    db = get_db()
+    emp = db.execute("SELECT * FROM employees WHERE id=?", (emp_id,)).fetchone()
+    if emp is None:
+        abort(404)
+    pattern = '%"id":' + str(emp_id) + ',%'
+    out = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "employee": dict(emp),
+        "training_records": [dict(r) for r in db.execute("SELECT * FROM training_records WHERE employee_id=?", (emp_id,))],
+        "coida_earnings": [dict(r) for r in db.execute("SELECT * FROM coida_earnings WHERE employee_id=?", (emp_id,))],
+        "stored_report_versions_containing_employee": [
+            dict(r) for r in db.execute(
+                """SELECT rv.id, rv.report_type, rv.version, rv.generated_at, r.module, r.period_label
+                   FROM report_versions rv JOIN compliance_records r ON r.id=rv.record_id
+                   WHERE rv.snapshot_json LIKE ? AND rv.report_type IN ('eea2','eea4','was8','wsp','atr','wsp_docx')""",
+                (pattern,))],
+        "audit_trail": [dict(r) for r in db.execute(
+            "SELECT ts, username, action, detail, before_json, after_json FROM audit_log "
+            "WHERE entity='employee' AND entity_id=? ORDER BY id", (str(emp_id),))],
+        "note": "Stored report versions are statutory records and are retained under the applicable retention "
+                "periods even if the employee is deleted from the register.",
+    }
+    log_action("employee_export", "employee", "Exported all data held for employee %s (access request)" % emp["emp_number"],
+               entity="employee", entity_id=emp_id)
+    data = json.dumps(out, indent=2, default=str, ensure_ascii=False).encode("utf-8")
+    return send_file(io.BytesIO(data), mimetype="application/json", as_attachment=True,
+                     download_name="employee_%s_data.json" % "".join(c for c in (emp["emp_number"] or str(emp_id)) if c.isalnum()))
 
 
 @app.route("/employees/<int:emp_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def delete_employee(emp_id):
+    """Permanent deletion — administrators only, archived employees only, and refused
+    while any training/COIDA record still refers to the employee. Stored report
+    snapshots are unaffected either way."""
     db = get_db()
-    db.execute("DELETE FROM employees WHERE id=?", (emp_id,))
-    db.commit()
-    flash("Employee deleted.", "warning")
-    return redirect(url_for("employees"))
+    emp = db.execute("SELECT * FROM employees WHERE id=?", (emp_id,)).fetchone()
+    if emp is None:
+        abort(404)
+    if emp["status"] != "ARCHIVED":
+        flash("Only archived employees can be permanently deleted. Terminate and archive first.", "danger")
+        return redirect(url_for("employees"))
+    if (request.form.get("confirm_number") or "").strip() != (emp["emp_number"] or ""):
+        flash("Type the employee number to confirm permanent deletion.", "danger")
+        return redirect(url_for("employees", status="ARCHIVED"))
+    try:
+        db.execute("DELETE FROM employees WHERE id=?", (emp_id,))
+        log_action("employee_delete", "employee", "Permanently deleted archived employee %s" % emp["emp_number"],
+                   entity="employee", entity_id=emp_id, before={"emp_number": emp["emp_number"], "status": emp["status"]},
+                   commit=False)
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash("Employee %s is referenced by training or COIDA records and cannot be deleted. It stays archived."
+              % emp["emp_number"], "warning")
+        return redirect(url_for("employees", status="ARCHIVED"))
+    flash("Employee permanently deleted.", "warning")
+    return redirect(url_for("employees", status="ARCHIVED"))
 
 
 @app.route("/employees/template")
 @login_required
 def employee_template():
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
-        "emp_number", "first_name", "last_name", "id_number", "race", "gender",
-        "disability", "occupational_level", "department", "job_title", "salary",
-        "employment_date", "province", "nationality", "coida_class_code", "coida_subclass"
-    ])
-    writer.writerow([
-        "EMP001", "John", "Doe", "8001015009087", "African", "Male",
-        "No", "Skilled Technical", "IT", "Developer", "25000",
-        "2020-01-15", "Gauteng", "South African", "A", "A1"
-    ])
-    output.seek(0)
-    return send_file(
-        io.BytesIO(output.read().encode()),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name="employee_template.csv",
-    )
+    return send_file(io.BytesIO(template_csv()), mimetype="text/csv", as_attachment=True,
+                     download_name="employee_import_template.csv")
 
 
-# ─── EE — Employment Equity (EEA2 & EEA4) ────────────────────────────────────
+# ─── EE — Employment Equity ──────────────────────────────────────────────────
 
-def _build_ee_matrix(employees):
-    races_short = ["African", "Coloured", "Indian", "White", "Foreign National"]
-    matrix = {}
-    for lvl in OCC_LEVELS:
-        matrix[lvl] = {r: {"M": 0, "F": 0} for r in races_short}
-        matrix[lvl]["Total"] = 0
-    for emp in employees:
-        lvl = emp["occupational_level"]
-        race = emp["race"]
-        gender = emp["gender"]
-        if lvl in matrix and race in races_short:
-            g_key = "M" if gender == "Male" else "F"
-            matrix[lvl][race][g_key] += 1
-            matrix[lvl]["Total"] += 1
-    return matrix
+def _module_records(db, module):
+    return db.execute("SELECT * FROM compliance_records WHERE module=? AND deleted=0 ORDER BY period_year DESC, id DESC",
+                      (module,)).fetchall()
 
 
-@app.route("/ee", methods=["GET", "POST"])
+def _selected_record(db, module):
+    rows = _module_records(db, module)
+    rid = _int_or_none(request.args.get("record"))
+    sel = next((dict(r) for r in rows if r["id"] == rid), None) if rid else None
+    if sel is None:
+        sel = next((dict(r) for r in rows if r["status"] not in rec.DONE), None) or (dict(rows[0]) if rows else None)
+    return rows, sel
+
+
+@app.route("/ee")
 @login_required
 def ee():
+    from modules import ee as eecalc
     db = get_db()
-    if request.method == "POST":
-        data = request.form
-        info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-        if info:
-            db.execute(
-                """UPDATE company_info SET company_name=?, reg_number=?,
-                   reporting_year=?, designated_employer=?, updated_at=datetime('now') WHERE id=?""",
-                (data.get("company_name"), data.get("reg_number"),
-                 data.get("reporting_year"), data.get("designated_employer"), info["id"])
-            )
-        else:
-            db.execute(
-                """INSERT INTO company_info (company_name, reg_number, reporting_year, designated_employer)
-                   VALUES (?,?,?,?)""",
-                (data.get("company_name"), data.get("reg_number"),
-                 data.get("reporting_year"), data.get("designated_employer"))
-            )
-        db.commit()
-        log_action("ee_update", "project", "Updated Employment Equity company details", target="ee")
-        flash("Employment Equity company info saved.", "success")
-        return redirect(url_for("ee"))
-
-    employees = db.execute("SELECT * FROM employees").fetchall()
-    company_info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-    matrix = _build_ee_matrix(employees)
-    disability_count = sum(1 for e in employees if e["disability"] == "Yes")
-
-    from modules.checklists import get_checklist
-    checklist = get_checklist("ee")
-    states = get_checklist_states(db, "ee")
-    custom = get_custom_tasks(db, "ee")
-    hidden = get_hidden_tasks(db, "ee")
-    done, total, pct = checklist_progress(checklist, states, custom, hidden)
-
-    return render_template(
-        "ee.html",
-        matrix=matrix,
-        occ_levels=OCC_LEVELS,
-        disability_count=disability_count,
-        company_info=company_info,
-        total_employees=len(employees),
-        checklist=checklist,
-        checklist_states=states,
-        custom_tasks=custom,
-        hidden_tasks=hidden,
-        cl_done=done,
-        cl_total=total,
-        cl_pct=pct,
-    )
-
-
-@app.route("/ee/generate", methods=["POST"])
-@login_required
-def ee_generate():
-    from modules.gbs import generate_eea2, generate_eea4
-    db = get_db()
-    report_type = request.form.get("report_type", "eea2")
-    company_info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-    ci = dict(company_info) if company_info else {}
-
-    if report_type == "eea2":
-        data = generate_eea2(db, ci)
-        fname = "EEA2_Report.xlsx"
-    else:
-        data = generate_eea4(db, ci)
-        fname = "EEA4_Report.xlsx"
-
-    return send_file(
-        io.BytesIO(data),
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True,
-        download_name=fname,
-    )
+    rows, sel = _selected_record(db, "ee")
+    analysis = matrix = checks = None
+    if sel:
+        snap, _company, _rs = reports_store.build_snapshot(db, sel, "eea2")
+        analysis = eecalc.analyse(snap)
+        if analysis.get("levels"):
+            e2, e4 = eecalc.eea2_data(analysis), eecalc.eea4_data(analysis)
+            checks = eecalc.reconcile(analysis, e2, e4)
+            matrix = {"columns": e2["columns"], "rows": {lvl: {c: e2["permanent"][lvl][c] + e2["temporary"][lvl][c]
+                                                              for c in e2["columns"]} for lvl in analysis["levels"]}}
+    return render_template("ee.html", records=rows, sel=sel, analysis=analysis, matrix=matrix, checks=checks,
+                           company_info=current_profile(db), status_labels=rec.STATUS_LABELS,
+                           cl=checklist_bundle(db, sel) if sel else None,
+                           total_active=db.execute("SELECT COUNT(*) FROM employees WHERE status='ACTIVE'").fetchone()[0])
 
 
 # ─── GBS — Global Business Services Quarterly Claim Projects ─────────────────
@@ -947,22 +1586,14 @@ QUARTERS = [
 ]
 
 
-def _gbs_scope(project_id):
-    """Checklist 'module' key for a specific GBS project."""
-    return "gbs:%d" % int(project_id)
-
-
-def _gbs_project_progress(db, project_id):
-    """Return (done, total, percent) for a project's checklist."""
+def _gbs_project_progress(db, project):
     from modules.checklists import get_checklist
     checklist = get_checklist("gbs")
-    if not checklist:
+    if not checklist or not project["record_id"]:
         return 0, 0, 0
-    scope = _gbs_scope(project_id)
-    states = get_checklist_states(db, scope)
-    custom = get_custom_tasks(db, scope)
-    hidden = get_hidden_tasks(db, scope)
-    return checklist_progress(checklist, states, custom, hidden)
+    scope = "record:%d" % project["record_id"]
+    return checklist_progress(checklist, get_checklist_states(db, scope), get_custom_tasks(db, scope),
+                              get_hidden_tasks(db, scope))
 
 
 @app.route("/gbs", methods=["GET"])
@@ -970,50 +1601,28 @@ def _gbs_project_progress(db, project_id):
 def gbs():
     """Projects dashboard — all (non-trashed) quarterly claims grouped by year."""
     db = get_db()
-    purge_expired_projects(db)  # housekeeping: clear any holds that have elapsed
-
+    purge_expired_projects(db)
     rows = db.execute(
-        "SELECT * FROM gbs_projects WHERE trashed=0 ORDER BY year DESC, quarter DESC, id DESC"
-    ).fetchall()
-
-    # Group by year
+        """SELECT p.*, r.status AS wf_status FROM gbs_projects p LEFT JOIN compliance_records r ON r.id=p.record_id
+           WHERE p.trashed=0 ORDER BY p.year DESC, p.quarter DESC, p.id DESC""").fetchall()
     by_year = {}
     for r in rows:
         proj = dict(r)
-        done, total, pct = _gbs_project_progress(db, proj["id"])
-        proj["cl_done"] = done
-        proj["cl_total"] = total
-        proj["cl_pct"] = pct
+        proj["cl_done"], proj["cl_total"], proj["cl_pct"] = _gbs_project_progress(db, proj)
+        proj["wf_label"] = rec.STATUS_LABELS.get(proj["wf_status"], "")
         by_year.setdefault(proj["year"], []).append(proj)
-
-    # Sort quarters within each year (Q4 down to Q1 for newest first)
     quarter_order = {"Q4": 4, "Q3": 3, "Q2": 2, "Q1": 1}
     for yr in by_year:
         by_year[yr].sort(key=lambda p: quarter_order.get(p["quarter"], 0), reverse=True)
-    grouped = sorted(by_year.items(), reverse=True)  # newest year first
-
-    # Stats
-    total_projects = len(rows)
-    submitted = sum(1 for r in rows if r["status"] == "Submitted")
-    in_progress = sum(1 for r in rows if r["status"] == "In Progress")
-    drafts = sum(1 for r in rows if r["status"] == "Draft")
-    trash_count = db.execute(
-        "SELECT COUNT(*) AS c FROM gbs_projects WHERE trashed=1"
-    ).fetchone()["c"]
-
+    grouped = sorted(by_year.items(), reverse=True)
+    trash_count = db.execute("SELECT COUNT(*) AS c FROM gbs_projects WHERE trashed=1").fetchone()["c"]
     now = datetime.now()
-    current_q = "Q%d" % ((now.month - 1) // 3 + 1)
-
     return render_template(
-        "gbs_projects.html",
-        grouped=grouped,
-        total_projects=total_projects,
-        submitted=submitted,
-        in_progress=in_progress,
-        drafts=drafts,
-        trash_count=trash_count,
-        current_year=now.year,
-        current_quarter=current_q,
+        "gbs_projects.html", grouped=grouped, total_projects=len(rows),
+        submitted=sum(1 for r in rows if r["status"] == "Submitted"),
+        in_progress=sum(1 for r in rows if r["status"] == "In Progress"),
+        drafts=sum(1 for r in rows if r["status"] == "Draft"),
+        trash_count=trash_count, current_year=now.year, current_quarter="Q%d" % ((now.month - 1) // 3 + 1),
         quarters=QUARTERS,
     )
 
@@ -1023,35 +1632,30 @@ def gbs():
 def gbs_new():
     db = get_db()
     quarter = (request.form.get("quarter") or "").strip()
-    year = request.form.get("year")
+    year = _int_or_none(request.form.get("year"))
     if quarter not in {q[0] for q in QUARTERS}:
         flash("Please select a valid quarter.", "danger")
         return redirect(url_for("gbs"))
-    try:
-        year = int(year)
-    except (TypeError, ValueError):
+    if not year or not 2000 <= year <= 2100:
         flash("Please provide a valid year.", "danger")
         return redirect(url_for("gbs"))
-
-    # Warn if a non-trashed project already exists for this quarter+year (but allow it)
-    existing = db.execute(
-        "SELECT id FROM gbs_projects WHERE quarter=? AND year=? AND trashed=0", (quarter, year)
-    ).fetchone()
-    if existing and not request.form.get("force"):
-        flash(
-            f"A project for {quarter} {year} already exists. Open it from the list, or tick 'Create anyway' to make a second one.",
-            "warning",
-        )
+    label = "%s %d" % (quarter, year)
+    try:
+        qn = int(quarter[1])
+        start = date(year, (qn - 1) * 3 + 1, 1)
+        end = (date(year + (qn == 4), (qn * 3) % 12 + 1, 1) - timedelta(days=1))
+        rid = rec.create_record(db, "gbs", label, g.user, period_year=year, period_start=start.isoformat(),
+                                period_end=end.isoformat(), official_source="https://www.thedtic.gov.za")
+        cur = db.execute("INSERT INTO gbs_projects (quarter, year, status, record_id) VALUES (?, ?, 'Draft', ?)",
+                         (quarter, year, rid))
+        log_action("project_create", "project", f"Created GBS quarterly claim {label}", target=f"gbs:{cur.lastrowid}",
+                   entity="compliance_record", entity_id=rid, commit=False)
+        db.commit()
+    except rec.WorkflowError:
+        db.rollback()
+        flash(f"A claim for {label} already exists. Open it from the list (or restore it from the trash).", "warning")
         return redirect(url_for("gbs"))
-
-    cur = db.execute(
-        "INSERT INTO gbs_projects (quarter, year, status) VALUES (?, ?, 'Draft')",
-        (quarter, year),
-    )
-    db.commit()
-    log_action("project_create", "project",
-               f"Created GBS quarterly claim {quarter} {year}", target=f"gbs:{cur.lastrowid}")
-    flash(f"New GBS project created: {quarter} {year}.", "success")
+    flash(f"New GBS project created: {label}.", "success")
     return redirect(url_for("gbs_project", project_id=cur.lastrowid))
 
 
@@ -1066,121 +1670,128 @@ def gbs_project(project_id):
     if proj["trashed"]:
         flash("That project is in the trash. An administrator must restore it first.", "warning")
         return redirect(url_for("gbs"))
-
-    readonly = proj["status"] == "Submitted"
+    record = rec.get_record(db, proj["record_id"])
+    readonly = record is None or record["status"] not in rec.EDITABLE
 
     if request.method == "POST":
         if readonly:
-            flash("This project has been submitted. Reopen it to edit.", "warning")
+            flash("This claim is %s and cannot be edited. It must be sent back for changes first."
+                  % rec.STATUS_LABELS.get(record["status"], "locked").lower(), "warning")
             return redirect(url_for("gbs_project", project_id=project_id))
         data = request.form
-        # Auto-promote Draft → In Progress on first save
-        new_status = proj["status"]
-        if new_status == "Draft":
-            new_status = "In Progress"
+        errors = []
+        nums = {}
+        for k in ("num_campaigns", "num_qualifying_employees"):
+            v = _int_or_none(data.get(k) or 0)
+            if v is None or v < 0:
+                errors.append("%s must be a whole number of 0 or more." % k.replace("_", " ").capitalize())
+            nums[k] = v
+        try:
+            rev = float(str(data.get("export_revenue") or 0).replace(",", "").replace(" ", ""))
+            if rev < 0 or rev != rev:
+                raise ValueError
+        except ValueError:
+            errors.append("Export revenue must be a positive number.")
+            rev = 0
+        for k in ("dtic_notification_date", "submission_deadline"):
+            if data.get(k):
+                try:
+                    date.fromisoformat(data[k])
+                except ValueError:
+                    errors.append("%s is not a valid date." % k.replace("_", " ").capitalize())
+        if errors:
+            for e in errors:
+                flash(e, "danger")
+            return redirect(url_for("gbs_project", project_id=project_id) + "#details")
+        before = dict(proj)
+        new_status = "In Progress" if proj["status"] == "Draft" else proj["status"]
         db.execute(
             """UPDATE gbs_projects SET company_name=?, dtic_notification_date=?,
                submission_deadline=?, num_campaigns=?, num_qualifying_employees=?,
                export_revenue=?, premises=?, auditor=?, notes=?, status=?,
                updated_at=datetime('now') WHERE id=?""",
-            (
-                data.get("company_name"), data.get("dtic_notification_date"),
-                data.get("submission_deadline"),
-                data.get("num_campaigns") or 0, data.get("num_qualifying_employees") or 0,
-                data.get("export_revenue") or 0, data.get("premises"),
-                data.get("auditor"), data.get("notes"), new_status, project_id,
-            ),
+            ((data.get("company_name") or "")[:200], data.get("dtic_notification_date") or None,
+             data.get("submission_deadline") or None, nums["num_campaigns"], nums["num_qualifying_employees"],
+             round(rev, 2), (data.get("premises") or "")[:300], (data.get("auditor") or "")[:200],
+             (data.get("notes") or "")[:4000], new_status, project_id),
         )
+        if data.get("submission_deadline") and data.get("submission_deadline") != record["due_date"]:
+            db.execute("UPDATE compliance_records SET due_date=?, updated_at=datetime('now'), updated_by=?, "
+                       "row_version=row_version+1 WHERE id=?", (data["submission_deadline"], g.user["id"], record["id"]))
+        after = dict(db.execute("SELECT * FROM gbs_projects WHERE id=?", (project_id,)).fetchone())
+        changed = {k: after[k] for k in after if after[k] != before.get(k) and k not in ("updated_at",)}
+        log_action("project_update", "project", f"Updated claim details for GBS {proj['quarter']} {proj['year']}",
+                   target=f"gbs:{project_id}", entity="gbs_project", entity_id=project_id,
+                   before={k: before.get(k) for k in changed}, after=changed, commit=False)
         db.commit()
-        log_action("project_update", "project",
-                   f"Updated claim details for GBS {proj['quarter']} {proj['year']}",
-                   target=f"gbs:{project_id}")
         flash("Claim details saved.", "success")
         return redirect(url_for("gbs_project", project_id=project_id))
 
-    from modules.checklists import get_checklist
-    checklist = get_checklist("gbs")
-    scope = _gbs_scope(project_id)
-    states = get_checklist_states(db, scope)
-    custom = get_custom_tasks(db, scope)
-    hidden = get_hidden_tasks(db, scope)
-    done, total, pct = checklist_progress(checklist, states, custom, hidden)
-
+    cl = checklist_bundle(db, record) if record else None
     return render_template(
-        "gbs_project.html",
-        project=proj,
-        scope=scope,
-        readonly=readonly,
-        checklist=checklist,
-        checklist_states=states,
-        custom_tasks=custom,
-        hidden_tasks=hidden,
-        cl_done=done,
-        cl_total=total,
-        cl_pct=pct,
-        current_year=datetime.now().year,
+        "gbs_project.html", project=proj, record=record, scope=cl["scope"] if cl else "",
+        readonly=readonly, checklist=cl["checklist"] if cl else None,
+        checklist_states=cl["states"] if cl else {}, custom_tasks=cl["custom"] if cl else {},
+        hidden_tasks=cl["hidden"] if cl else set(), cl_done=cl["done"] if cl else 0,
+        cl_total=cl["total"] if cl else 0, cl_pct=cl["pct"] if cl else 0, cl_locked=cl["locked"] if cl else True,
+        status_labels=rec.STATUS_LABELS, current_year=datetime.now().year,
     )
 
 
 @app.route("/gbs/<int:project_id>/submit", methods=["POST"])
 @login_required
 def gbs_project_submit(project_id):
+    """Kept for old links: submission now goes through the compliance workflow."""
     db = get_db()
-    proj = db.execute("SELECT * FROM gbs_projects WHERE id=?", (project_id,)).fetchone()
+    proj = db.execute("SELECT record_id FROM gbs_projects WHERE id=?", (project_id,)).fetchone()
     if not proj:
-        flash("Project not found.", "danger")
-        return redirect(url_for("gbs"))
-    db.execute(
-        "UPDATE gbs_projects SET status='Submitted', submitted_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
-        (project_id,),
-    )
-    db.commit()
-    log_action("project_submit", "project",
-               f"Submitted & closed GBS {proj['quarter']} {proj['year']}", target=f"gbs:{project_id}")
-    flash(f"Project {proj['quarter']} {proj['year']} submitted and closed.", "success")
-    return redirect(url_for("gbs"))
+        abort(404)
+    flash("Submit the claim from its compliance record: it must be reviewed and approved first.", "info")
+    return redirect(url_for("record_detail", record_id=proj["record_id"]))
 
 
 @app.route("/gbs/<int:project_id>/reopen", methods=["POST"])
 @login_required
 def gbs_project_reopen(project_id):
     db = get_db()
-    proj = db.execute("SELECT * FROM gbs_projects WHERE id=?", (project_id,)).fetchone()
-    db.execute(
-        "UPDATE gbs_projects SET status='In Progress', submitted_at=NULL, updated_at=datetime('now') WHERE id=?",
-        (project_id,),
-    )
-    db.commit()
-    if proj:
-        log_action("project_reopen", "project",
-                   f"Reopened GBS {proj['quarter']} {proj['year']}", target=f"gbs:{project_id}")
-    flash("Project reopened for editing.", "info")
-    return redirect(url_for("gbs_project", project_id=project_id))
+    proj = db.execute("SELECT record_id FROM gbs_projects WHERE id=?", (project_id,)).fetchone()
+    if not proj:
+        abort(404)
+    flash("Reopening a submitted claim is an administrator action on the compliance record, with a reason.", "info")
+    return redirect(url_for("record_detail", record_id=proj["record_id"]))
 
 
 @app.route("/gbs/<int:project_id>/delete", methods=["POST"])
 @login_required
 def gbs_project_delete(project_id):
-    """Soft-delete: move the project to the trash bin (recoverable by an admin)."""
+    """Soft-delete: move the project to the trash bin (recoverable by an admin).
+    Submitted claims are compliance evidence and cannot be trashed."""
     db = get_db()
     proj = db.execute("SELECT * FROM gbs_projects WHERE id=?", (project_id,)).fetchone()
     if not proj:
         flash("Project not found.", "danger")
         return redirect(url_for("gbs"))
+    record = rec.get_record(db, proj["record_id"])
+    if record and record["status"] not in ("DRAFT", "PREPARED", "REQUIRES_CHANGES"):
+        flash("A claim that is %s cannot be moved to the trash." % rec.STATUS_LABELS[record["status"]].lower(), "danger")
+        return redirect(url_for("gbs_project", project_id=project_id))
+    if proj["trashed"]:
+        return redirect(url_for("gbs"))
     db.execute(
         """UPDATE gbs_projects SET trashed=1, deleted_at=datetime('now'), deleted_by=?,
            purge_at=NULL, purge_approved_at=NULL, purge_approved_by=NULL,
            updated_at=datetime('now') WHERE id=?""",
-        (session.get("username", "unknown"), project_id),
+        (g.user["username"], project_id),
     )
+    if record:
+        db.execute("UPDATE compliance_records SET deleted=1, updated_at=datetime('now'), updated_by=?, "
+                   "row_version=row_version+1 WHERE id=?", (g.user["id"], record["id"]))
+        rec.add_event(db, record["id"], "trashed", g.user, comment="Moved to the trash bin")
+    log_action("project_delete", "project", f"Moved GBS {proj['quarter']} {proj['year']} to trash",
+               target=f"gbs:{project_id}", commit=False)
     db.commit()
-    log_action("project_delete", "project",
-               f"Moved GBS {proj['quarter']} {proj['year']} to trash", target=f"gbs:{project_id}")
-    flash(
-        f"Project {proj['quarter']} {proj['year']} moved to the trash bin. "
-        "An administrator can restore it or approve permanent deletion.",
-        "warning",
-    )
+    flash(f"Project {proj['quarter']} {proj['year']} moved to the trash bin. "
+          "An administrator can restore it or approve permanent deletion.", "warning")
     return redirect(url_for("gbs"))
 
 
@@ -1200,7 +1811,7 @@ def trash():
     now = datetime.now()
     for r in rows:
         p = dict(r)
-        done, total, pct = _gbs_project_progress(db, p["id"])
+        done, total, pct = _gbs_project_progress(db, p)
         p["cl_done"], p["cl_total"], p["cl_pct"] = done, total, pct
         if p["purge_at"]:
             try:
@@ -1232,6 +1843,17 @@ def trash_restore(project_id):
     if not proj:
         flash("Project not found.", "danger")
         return redirect(url_for("trash"))
+    if proj["record_id"]:
+        r = db.execute("SELECT * FROM compliance_records WHERE id=?", (proj["record_id"],)).fetchone()
+        if r and db.execute("SELECT 1 FROM compliance_records WHERE module='gbs' AND period_label=? AND deleted=0 "
+                            "AND id<>?", (r["period_label"], r["id"])).fetchone():
+            flash("Another active claim for %s exists, so this one cannot be restored." % r["period_label"], "danger")
+            return redirect(url_for("trash"))
+        db.execute("UPDATE compliance_records SET deleted=0, updated_at=datetime('now'), row_version=row_version+1 "
+                   "WHERE id=?", (proj["record_id"],))
+        db.execute("""INSERT INTO workflow_events (record_id, event, user_id, username, comment)
+                      VALUES (?, 'restored', ?, ?, 'Restored from the trash bin')""",
+                   (proj["record_id"], g.user["id"], g.user["username"]))
     db.execute(
         """UPDATE gbs_projects SET trashed=0, deleted_at=NULL, deleted_by=NULL,
            purge_at=NULL, purge_approved_at=NULL, purge_approved_by=NULL,
@@ -1295,212 +1917,350 @@ def trash_cancel(project_id):
     return redirect(url_for("trash"))
 
 
-# ─── WSP ─────────────────────────────────────────────────────────────────────
+# ─── WSP / ATR ───────────────────────────────────────────────────────────────
 
-@app.route("/wsp", methods=["GET", "POST"])
+TRAINING_STATUSES = ["Planned", "In Progress", "Completed", "Cancelled"]
+
+
+@app.route("/wsp")
 @login_required
 def wsp():
     db = get_db()
-    if request.method == "POST":
-        data = request.form
-        info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-        if info:
-            db.execute(
-                "UPDATE company_info SET seta=?, sdl_number=?, skills_levy=?, updated_at=datetime('now') WHERE id=?",
-                (data.get("seta"), data.get("sdl_number"), data.get("skills_levy") or 0, info["id"])
-            )
-        else:
-            db.execute(
-                "INSERT INTO company_info (seta, sdl_number, skills_levy) VALUES (?,?,?)",
-                (data.get("seta"), data.get("sdl_number"), data.get("skills_levy") or 0)
-            )
-        db.commit()
-        flash("WSP info saved.", "success")
-        return redirect(url_for("wsp"))
+    rows, sel = _selected_record(db, "wsp")
+    training = db.execute("SELECT * FROM training_records WHERE record_id=? ORDER BY id DESC",
+                          (sel["id"],)).fetchall() if sel else []
+    unassigned = db.execute("SELECT COUNT(*) FROM training_records WHERE record_id IS NULL").fetchone()[0]
+    employees = db.execute("SELECT id, emp_number, first_name, last_name FROM employees WHERE status='ACTIVE' "
+                           "ORDER BY last_name, first_name").fetchall()
+    return render_template("wsp.html", records=rows, sel=sel, training=training, employees=employees,
+                           unassigned=unassigned, company_info=current_profile(db), statuses=TRAINING_STATUSES,
+                           status_labels=rec.STATUS_LABELS, editable=bool(sel) and sel["status"] in rec.EDITABLE)
 
-    employees = db.execute("SELECT id, first_name, last_name FROM employees ORDER BY last_name").fetchall()
-    training = db.execute("SELECT * FROM training_records ORDER BY created_at DESC").fetchall()
-    company_info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-    return render_template("wsp.html", employees=employees, training=training,
-                           company_info=company_info, setas=SETAS)
+
+def _editable_record_or_flash(db, record_id, module):
+    r = rec.get_record(db, record_id) if record_id else None
+    if r is None or r["module"] != module or r["deleted"]:
+        flash("Choose a valid %s period first." % rec.module_title(module), "danger")
+        return None
+    if r["status"] not in rec.EDITABLE:
+        flash("%s %s is %s; its data is locked. It must be sent back for changes first." % (
+            rec.module_title(module), r["period_label"], rec.STATUS_LABELS[r["status"]].lower()), "danger")
+        return None
+    return r
 
 
 @app.route("/wsp/training", methods=["POST"])
 @login_required
 def wsp_training():
     db = get_db()
-    data = request.form
-    emp_id = data.get("employee_id")
-    emp_name = ""
-    if emp_id:
-        emp = db.execute("SELECT first_name, last_name FROM employees WHERE id=?", (emp_id,)).fetchone()
-        if emp:
-            emp_name = f"{emp['first_name']} {emp['last_name']}"
-    db.execute(
-        """INSERT INTO training_records
-           (employee_id, employee_name, intervention_type, nqf_level, cost, provider,
-            target_date, actual_date, certificate, status, seta, sdl_number)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            emp_id, emp_name, data.get("intervention_type"), data.get("nqf_level"),
-            data.get("cost") or None, data.get("provider"), data.get("target_date"),
-            data.get("actual_date"), data.get("certificate"),
-            data.get("status", "Planned"), data.get("seta"), data.get("sdl_number"),
-        ),
-    )
+    f = request.form
+    r = _editable_record_or_flash(db, _int_or_none(f.get("record_id")), "wsp")
+    if r is None:
+        return redirect(url_for("wsp"))
+    errors = []
+    emp = db.execute("SELECT * FROM employees WHERE id=?", (_int_or_none(f.get("employee_id")),)).fetchone()
+    if emp is None:
+        errors.append("Choose the employee.")
+    status = f.get("status", "Planned")
+    if status not in TRAINING_STATUSES:
+        errors.append("Invalid status.")
+    try:
+        cost = float((f.get("cost") or "0").replace(",", "").replace(" ", ""))
+        if cost < 0 or cost != cost or cost > 100_000_000:
+            raise ValueError
+    except ValueError:
+        errors.append("Cost must be a positive amount.")
+        cost = 0
+    for k in ("target_date", "actual_date"):
+        if f.get(k):
+            try:
+                date.fromisoformat(f[k])
+            except ValueError:
+                errors.append("%s is not a valid date." % k.replace("_", " ").capitalize())
+    if status == "Completed" and not f.get("actual_date"):
+        errors.append("Completed training needs the actual date.")
+    if not (f.get("intervention_type") or "").strip():
+        errors.append("Describe the intervention / programme.")
+    for k in ("intervention_type", "provider", "certificate", "category", "skills_gap"):
+        if (f.get(k) or "").lstrip().startswith(("=", "+", "@")):
+            errors.append("%s looks like a spreadsheet formula, which is not allowed." % k.replace("_", " ").capitalize())
+    if errors:
+        for e in errors:
+            flash(e, "danger")
+        return redirect(url_for("wsp", record=r["id"]))
+    cur = db.execute(
+        """INSERT INTO training_records (record_id, employee_id, employee_number, employee_name, intervention_type,
+               category, skills_gap, nqf_level, cost, provider, target_date, actual_date, certificate, status)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (r["id"], emp["id"], emp["emp_number"], "%s %s" % (emp["first_name"], emp["last_name"]),
+         f["intervention_type"].strip()[:200], (f.get("category") or "").strip()[:100] or None,
+         (f.get("skills_gap") or "").strip()[:300] or None, (f.get("nqf_level") or "").strip()[:20] or None,
+         round(cost, 2), (f.get("provider") or "").strip()[:200] or None, f.get("target_date") or None,
+         f.get("actual_date") or None, (f.get("certificate") or "").strip()[:200] or None, status))
+    log_action("training_create", "wsp", "Added training for %s (%s %s)" % (emp["emp_number"], "WSP/ATR",
+               r["period_label"]), entity="training_record", entity_id=cur.lastrowid, commit=False)
     db.commit()
     flash("Training record added.", "success")
-    return redirect(url_for("wsp"))
+    return redirect(url_for("wsp", record=r["id"]))
 
 
-@app.route("/wsp/generate", methods=["POST"])
+@app.route("/wsp/assign-unlinked", methods=["POST"])
 @login_required
-def wsp_generate():
-    from modules.wsp import generate_wsp, generate_atr, generate_wsp_word
+def wsp_assign_unlinked():
+    """Training captured before reporting periods existed is attached to a chosen period."""
     db = get_db()
-    report_type = request.form.get("report_type", "wsp")
-    company_info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-    ci = dict(company_info) if company_info else {}
-
-    if report_type == "wsp":
-        data = generate_wsp(db, ci)
-        return send_file(io.BytesIO(data),
-                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                         as_attachment=True, download_name="WSP_Report.xlsx")
-    elif report_type == "atr":
-        data = generate_atr(db, ci)
-        return send_file(io.BytesIO(data),
-                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                         as_attachment=True, download_name="ATR_Report.xlsx")
-    else:
-        data = generate_wsp_word(db, ci)
-        return send_file(io.BytesIO(data),
-                         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                         as_attachment=True, download_name="WSP_Report.docx")
+    r = _editable_record_or_flash(db, _int_or_none(request.form.get("record_id")), "wsp")
+    if r is None:
+        return redirect(url_for("wsp"))
+    n = db.execute("UPDATE training_records SET record_id=? WHERE record_id IS NULL", (r["id"],)).rowcount
+    log_action("training_assign", "wsp", "Attached %d earlier training records to WSP/ATR %s" % (n, r["period_label"]),
+               entity="compliance_record", entity_id=r["id"], commit=False)
+    db.commit()
+    flash("%d earlier training record(s) attached to %s." % (n, r["period_label"]), "success")
+    return redirect(url_for("wsp", record=r["id"]))
 
 
-# ─── BBBEE ───────────────────────────────────────────────────────────────────
+# ─── B-BBEE ──────────────────────────────────────────────────────────────────
 
-@app.route("/bbbee", methods=["GET"])
+@app.route("/bbbee")
 @login_required
 def bbbee():
+    import json
+    from modules import bbbee as bb
     db = get_db()
-    bbbee_row = db.execute("SELECT * FROM bbbee_data ORDER BY id DESC LIMIT 1").fetchone()
-    return render_template("bbbee.html", bbbee_row=bbbee_row)
+    rows, sel = _selected_record(db, "bbbee")
+    inputs = calc = None
+    error = None
+    params = {}
+    if sel:
+        row = db.execute("SELECT * FROM bbbee_inputs WHERE record_id=?", (sel["id"],)).fetchone()
+        if row:
+            inputs = dict(row)
+            inputs["values"] = json.loads(row["inputs_json"] or "{}")
+            rs = get_rule_set(db, bb.SCORECARD_CODES[row["scorecard_type"]], sel.get("period_end"))
+            try:
+                calc = bb.calculate(row["scorecard_type"], rs["params"], inputs["values"], row["black_owned_pct"] or 0)
+            except bb.InputError as e:
+                error = str(e)
+    for st, code in bb.SCORECARD_CODES.items():
+        rs = get_rule_set(db, code, sel.get("period_end") if sel else None)
+        params[st] = rs["params"] if rs else {}
+    return render_template("bbbee.html", records=rows, sel=sel, inputs=inputs, calc=calc, calc_error=error,
+                           params=params, company_info=current_profile(db), status_labels=rec.STATUS_LABELS,
+                           editable=bool(sel) and sel["status"] in rec.EDITABLE)
 
 
 @app.route("/bbbee/save", methods=["POST"])
 @login_required
 def bbbee_save():
-    from modules.bbbee import calculate_level
+    import json
+    from modules import bbbee as bb
     db = get_db()
-    data = request.form
-    scorecard_type = data.get("scorecard_type", "Generic")
-    ownership = float(data.get("ownership_score") or 0)
-    management = float(data.get("management_score") or 0)
-    skills = float(data.get("skills_score") or 0)
-    esd = float(data.get("esd_score") or 0)
-    sed = float(data.get("sed_score") or 0)
-    total = ownership + management + skills + esd + sed
-    black_pct = float(data.get("black_owned_percent") or 0)
-    level, _ = calculate_level(scorecard_type, total, black_pct)
-
+    f = request.form
+    r = _editable_record_or_flash(db, _int_or_none(f.get("record_id")), "bbbee")
+    if r is None:
+        return redirect(url_for("bbbee"))
+    stype = f.get("scorecard_type", "")
+    if stype not in bb.SCORECARD_CODES:
+        flash("Choose a scorecard type.", "danger")
+        return redirect(url_for("bbbee", record=r["id"]))
+    rs = get_rule_set(db, bb.SCORECARD_CODES[stype], r.get("period_end"))
+    keys = [e["key"] for e in rs["params"].get("elements", [])]
+    keys += [e["key"] + "_bonus" for e in rs["params"].get("elements", [])]
+    keys += [s["key"] for s in rs["params"].get("subminimums", [])]
+    values = {k: (f.get(k) or "0").strip() for k in keys}
+    try:
+        turnover = bb.d((f.get("annual_turnover") or "0").replace(",", "").replace(" ", ""))
+        bo = bb.d(f.get("black_owned_pct") or "0")
+        bwo = bb.d(f.get("black_women_owned_pct") or "0")
+        if turnover < 0:
+            raise bb.InputError("Turnover cannot be negative.")
+        if not (0 <= bwo <= bo <= 100):
+            raise bb.InputError("Black women ownership must be between 0 and black ownership, which must be 0–100%.")
+        calc = bb.calculate(stype, rs["params"], values, bo)
+    except bb.InputError as e:
+        flash(str(e), "danger")
+        return redirect(url_for("bbbee", record=r["id"]))
+    old = db.execute("SELECT * FROM bbbee_inputs WHERE record_id=?", (r["id"],)).fetchone()
     db.execute(
-        """INSERT INTO bbbee_data
-           (scorecard_type, ownership_score, management_score, skills_score,
-            esd_score, sed_score, total_score, bbbee_level, black_owned_percent,
-            assessment_year, company_name)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-        (scorecard_type, ownership, management, skills, esd, sed, total, level,
-         black_pct, data.get("assessment_year"), data.get("company_name"))
-    )
+        """INSERT INTO bbbee_inputs (record_id, scorecard_type, annual_turnover, black_owned_pct, black_women_owned_pct,
+               inputs_json, updated_at, updated_by) VALUES (?,?,?,?,?,?,datetime('now'),?)
+           ON CONFLICT(record_id) DO UPDATE SET scorecard_type=excluded.scorecard_type,
+               annual_turnover=excluded.annual_turnover, black_owned_pct=excluded.black_owned_pct,
+               black_women_owned_pct=excluded.black_women_owned_pct, inputs_json=excluded.inputs_json,
+               updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
+        (r["id"], stype, float(turnover), float(bo), float(bwo), json.dumps(values), g.user["id"]))
+    log_action("bbbee_update", "bbbee", "Saved B-BBEE inputs for %s (%s, %s)" % (
+        r["period_label"], stype, "Non-compliant" if calc["level"] == "NC" else "Level %s" % calc["level"]),
+        entity="compliance_record", entity_id=r["id"],
+        before=json.loads(old["inputs_json"]) if old else None, after=values, commit=False)
     db.commit()
-    flash(f"BBBEE scorecard saved. Level {level}.", "success")
-    return redirect(url_for("bbbee"))
+    lvl = "Non-compliant" if calc["level"] == "NC" else "Level %s" % calc["level"]
+    flash("Inputs saved. Internal calculation: %s (%s points)." % (lvl, calc["total"]), "success")
+    return redirect(url_for("bbbee", record=r["id"]))
 
 
-@app.route("/bbbee/generate", methods=["POST"])
+@app.route("/api/bbbee/level", methods=["POST"])
 @login_required
-def bbbee_generate():
-    from modules.bbbee import generate_scorecard_excel, generate_scorecard_pdf
+def api_bbbee_level():
+    from modules import bbbee as bb
     db = get_db()
-    report_type = request.form.get("report_type", "excel")
-    row = db.execute("SELECT * FROM bbbee_data ORDER BY id DESC LIMIT 1").fetchone()
-    scorecard_data = dict(row) if row else {}
-
-    if report_type == "pdf":
-        data = generate_scorecard_pdf(scorecard_data)
-        return send_file(io.BytesIO(data), mimetype="application/pdf",
-                         as_attachment=True, download_name="BBBEE_Certificate.pdf")
-    else:
-        data = generate_scorecard_excel(scorecard_data)
-        return send_file(io.BytesIO(data),
-                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                         as_attachment=True, download_name="BBBEE_Scorecard.xlsx")
+    data = request.get_json(silent=True) or {}
+    stype = str(data.get("scorecard_type", "GENERIC")).upper()
+    if stype not in bb.SCORECARD_CODES:
+        return jsonify({"ok": False, "error": "Unknown scorecard type."}), 400
+    rs = get_rule_set(db, bb.SCORECARD_CODES[stype])
+    try:
+        calc = bb.calculate(stype, rs["params"], data.get("inputs") or {}, data.get("black_owned_pct") or 0)
+    except bb.InputError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "level": calc["level"], "base_level": calc["base_level"],
+                    "total": str(calc["total"]), "recognition_pct": calc["recognition_pct"],
+                    "discounted": calc["discounted"], "notes": calc["notes"]})
 
 
 # ─── COIDA ───────────────────────────────────────────────────────────────────
 
-@app.route("/coida", methods=["GET"])
+@app.route("/coida")
 @login_required
 def coida():
+    from modules import coida as cc
     db = get_db()
-    earnings = db.execute("SELECT * FROM coida_classes ORDER BY class_code").fetchall()
+    rows, sel = _selected_record(db, "coida")
+    calc = earnings = rates = None
+    cap_info = None
+    if sel:
+        snap, _c, rs = reports_store.build_snapshot(db, sel, "was8")
+        calc = cc.calculate(snap)
+        earnings = db.execute("SELECT * FROM coida_earnings WHERE record_id=? ORDER BY class_code, employee_number",
+                              (sel["id"],)).fetchall()
+        rates = db.execute("SELECT * FROM coida_rates WHERE record_id=? ORDER BY class_code, subclass",
+                           (sel["id"],)).fetchall()
+        cap_info = {"rule": rs, "cap": calc["cap"]}
     logs = db.execute("SELECT * FROM logs_records ORDER BY expiry_date").fetchall()
-    company_info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-    today = date.today().isoformat()
-
-    # Update LOGS status dynamically
-    updated_logs = []
-    for log in logs:
-        expiry = log["expiry_date"] or ""
-        if expiry < today:
-            status = "Expired"
-        elif expiry <= date.today().replace(month=date.today().month).isoformat() or \
-                (expiry[:7] <= date.today().isoformat()[:7]):
-            # Expiring within 30 days
-            from datetime import timedelta
-            threshold = (date.today() + timedelta(days=30)).isoformat()
-            status = "Expiring Soon" if expiry <= threshold else "Valid"
-        else:
-            status = "Valid"
-        updated_logs.append({"log": log, "status": status})
-
-    from modules.coida import calculate_assessment
-    assessment = calculate_assessment(list(earnings))
-    return render_template("coida.html", earnings=earnings, logs=updated_logs,
-                           assessment=assessment, company_info=company_info,
-                           today=today)
+    today = date.today()
+    soon = (today + timedelta(days=30)).isoformat()
+    logs_view = []
+    for lg in logs:
+        exp = lg["expiry_date"] or ""
+        status = "Unknown" if not exp else "Expired" if exp < today.isoformat() else \
+            "Expiring Soon" if exp <= soon else "Valid"
+        logs_view.append({"log": lg, "status": status})
+    legacy = db.execute("SELECT * FROM coida_classes ORDER BY class_code").fetchall()
+    return render_template("coida.html", records=rows, sel=sel, calc=calc, earnings=earnings, rates=rates,
+                           cap_info=cap_info, logs=logs_view, legacy=legacy, company_info=current_profile(db),
+                           status_labels=rec.STATUS_LABELS, editable=bool(sel) and sel["status"] in rec.EDITABLE,
+                           today=today.isoformat())
 
 
-@app.route("/coida/earning", methods=["POST"])
+@app.route("/coida/rate", methods=["POST"])
 @login_required
-def coida_earning():
+def coida_rate():
     db = get_db()
-    data = request.form
-    rec_id = data.get("record_id")
-    if rec_id:
-        db.execute(
-            """UPDATE coida_classes SET class_code=?, subclass=?, description=?,
-               num_employees=?, annual_earnings=?, assessment_year=?, employer_reg_number=?
-               WHERE id=?""",
-            (data.get("class_code"), data.get("subclass"), data.get("description"),
-             data.get("num_employees") or 0, data.get("annual_earnings") or 0,
-             data.get("assessment_year"), data.get("employer_reg_number"), rec_id)
-        )
-    else:
-        db.execute(
-            """INSERT INTO coida_classes
-               (class_code, subclass, description, num_employees, annual_earnings,
-                assessment_year, employer_reg_number)
-               VALUES (?,?,?,?,?,?,?)""",
-            (data.get("class_code"), data.get("subclass"), data.get("description"),
-             data.get("num_employees") or 0, data.get("annual_earnings") or 0,
-             data.get("assessment_year"), data.get("employer_reg_number"))
-        )
+    f = request.form
+    r = _editable_record_or_flash(db, _int_or_none(f.get("record_id")), "coida")
+    if r is None:
+        return redirect(url_for("coida"))
+    code = (f.get("class_code") or "").strip()[:10]
+    sub = (f.get("subclass") or "").strip()[:10]
+    try:
+        rate = float((f.get("rate") or "").replace(",", "."))
+        if rate < 0 or rate > 100 or rate != rate:
+            raise ValueError
+    except ValueError:
+        flash("Rate must be a number between 0 and 100 (per R100 of earnings).", "danger")
+        return redirect(url_for("coida", record=r["id"]))
+    if not code:
+        flash("Class code is required.", "danger")
+        return redirect(url_for("coida", record=r["id"]))
+    old = db.execute("SELECT rate FROM coida_rates WHERE record_id=? AND class_code=? AND subclass=?",
+                     (r["id"], code, sub)).fetchone()
+    db.execute("""INSERT INTO coida_rates (record_id, class_code, subclass, description, rate, source_note)
+                  VALUES (?,?,?,?,?,?) ON CONFLICT(record_id, class_code, subclass) DO UPDATE SET
+                  description=excluded.description, rate=excluded.rate, source_note=excluded.source_note""",
+               (r["id"], code, sub, (f.get("description") or "").strip()[:200] or None, rate,
+                (f.get("source_note") or "").strip()[:200] or None))
+    log_action("coida_rate", "coida", "Set class %s%s rate to %s for %s" % (code, "/" + sub if sub else "", rate,
+               r["period_label"]), entity="compliance_record", entity_id=r["id"],
+               before={"rate": old["rate"]} if old else None, after={"rate": rate}, commit=False)
     db.commit()
-    flash("Earnings record saved.", "success")
-    return redirect(url_for("coida"))
+    flash("Rate saved.", "success")
+    return redirect(url_for("coida", record=r["id"]))
+
+
+@app.route("/coida/build-earnings", methods=["POST"])
+@login_required
+def coida_build_earnings():
+    """(Re)build per-employee earnings for the period from the register:
+    monthly salary x months employed within the assessment period."""
+    from modules.ee import months_in_period, money
+    db = get_db()
+    r = _editable_record_or_flash(db, _int_or_none(request.form.get("record_id")), "coida")
+    if r is None:
+        return redirect(url_for("coida"))
+    if not (r["period_start"] and r["period_end"]):
+        flash("Set the assessment period start and end dates on the record first.", "danger")
+        return redirect(url_for("coida", record=r["id"]))
+    ps, pe = date.fromisoformat(r["period_start"]), date.fromisoformat(r["period_end"])
+    rows = db.execute("SELECT * FROM employees WHERE employment_date IS NOT NULL").fetchall()
+    added, skipped = 0, []
+    db.execute("DELETE FROM coida_earnings WHERE record_id=?", (r["id"],))
+    for e in rows:
+        try:
+            start = date.fromisoformat(e["employment_date"])
+            end = date.fromisoformat(e["termination_date"]) if e["termination_date"] else None
+        except ValueError:
+            skipped.append(e["emp_number"] or str(e["id"]))
+            continue
+        months = months_in_period(start, end, ps, pe)
+        if months <= 0:
+            continue
+        if not e["coida_class_code"] or e["salary"] is None:
+            skipped.append(e["emp_number"] or str(e["id"]))
+            continue
+        earn = money(__import__("decimal").Decimal(str(e["salary"])) * months)
+        db.execute("""INSERT INTO coida_earnings (record_id, employee_id, employee_number, employee_name, class_code,
+                          subclass, earnings, months_worked) VALUES (?,?,?,?,?,?,?,?)""",
+                   (r["id"], e["id"], e["emp_number"], "%s %s" % (e["first_name"], e["last_name"]),
+                    e["coida_class_code"], e["coida_subclass"] or "", float(earn), float(months)))
+        added += 1
+    log_action("coida_build", "coida", "Built COIDA earnings for %s: %d employees, %d skipped" % (
+        r["period_label"], added, len(skipped)), entity="compliance_record", entity_id=r["id"], commit=False)
+    db.commit()
+    flash("Earnings built for %d employee(s)." % added, "success")
+    if skipped:
+        flash("Skipped %d employee(s) with no COIDA class or salary: %s" % (len(skipped), ", ".join(skipped[:15])),
+              "warning")
+    return redirect(url_for("coida", record=r["id"]))
+
+
+@app.route("/coida/earning/<int:earning_id>", methods=["POST"])
+@login_required
+def coida_earning_edit(earning_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM coida_earnings WHERE id=?", (earning_id,)).fetchone()
+    if row is None:
+        abort(404)
+    r = _editable_record_or_flash(db, row["record_id"], "coida")
+    if r is None:
+        return redirect(url_for("coida"))
+    try:
+        earn = float((request.form.get("earnings") or "").replace(",", "").replace(" ", ""))
+        if earn < 0 or earn != earn:
+            raise ValueError
+    except ValueError:
+        flash("Earnings must be zero or more.", "danger")
+        return redirect(url_for("coida", record=r["id"]))
+    code = (request.form.get("class_code") or row["class_code"]).strip()[:10]
+    db.execute("UPDATE coida_earnings SET earnings=?, class_code=?, notes=? WHERE id=?",
+               (round(earn, 2), code, (request.form.get("notes") or "").strip()[:200] or None, earning_id))
+    log_action("coida_earning_edit", "coida", "Adjusted COIDA earnings for %s in %s" % (row["employee_number"],
+               r["period_label"]), entity="coida_earning", entity_id=earning_id,
+               before={"earnings": row["earnings"], "class_code": row["class_code"]},
+               after={"earnings": round(earn, 2), "class_code": code}, commit=False)
+    db.commit()
+    flash("Earnings updated.", "success")
+    return redirect(url_for("coida", record=r["id"]))
 
 
 @app.route("/coida/logs", methods=["POST"])
@@ -1508,48 +2268,92 @@ def coida_earning():
 def coida_logs():
     db = get_db()
     data = request.form
-    rec_id = data.get("record_id")
+    for k in ("issue_date", "expiry_date"):
+        if data.get(k):
+            try:
+                date.fromisoformat(data[k])
+            except ValueError:
+                flash("Invalid date.", "danger")
+                return redirect(url_for("coida"))
+    if data.get("issue_date") and data.get("expiry_date") and data["expiry_date"] < data["issue_date"]:
+        flash("Expiry date must be after the issue date.", "danger")
+        return redirect(url_for("coida"))
+    rec_id = _int_or_none(data.get("record_id"))
+    vals = ((data.get("insurer") or "").strip()[:200], (data.get("policy_number") or "").strip()[:100],
+            data.get("issue_date") or None, data.get("expiry_date") or None)
     if rec_id:
-        db.execute(
-            "UPDATE logs_records SET insurer=?, policy_number=?, issue_date=?, expiry_date=? WHERE id=?",
-            (data.get("insurer"), data.get("policy_number"),
-             data.get("issue_date"), data.get("expiry_date"), rec_id)
-        )
+        old = db.execute("SELECT * FROM logs_records WHERE id=?", (rec_id,)).fetchone()
+        if old is None:
+            abort(404)
+        db.execute("UPDATE logs_records SET insurer=?, policy_number=?, issue_date=?, expiry_date=? WHERE id=?",
+                   vals + (rec_id,))
+        log_action("logs_update", "coida", "Updated Letter of Good Standing %s" % vals[1], entity="logs", entity_id=rec_id,
+                   before=dict(old), after=dict(zip(("insurer", "policy_number", "issue_date", "expiry_date"), vals)),
+                   commit=False)
     else:
-        db.execute(
-            "INSERT INTO logs_records (insurer, policy_number, issue_date, expiry_date) VALUES (?,?,?,?)",
-            (data.get("insurer"), data.get("policy_number"),
-             data.get("issue_date"), data.get("expiry_date"))
-        )
+        cur = db.execute("INSERT INTO logs_records (insurer, policy_number, issue_date, expiry_date) VALUES (?,?,?,?)",
+                         vals)
+        log_action("logs_create", "coida", "Added Letter of Good Standing %s" % vals[1], entity="logs",
+                   entity_id=cur.lastrowid, commit=False)
     db.commit()
-    flash("LOGS record saved.", "success")
+    flash("Letter of Good Standing saved.", "success")
     return redirect(url_for("coida"))
 
 
+# ─── Legacy report URLs → the record workflow ────────────────────────────────
+
+@app.route("/ee/generate", methods=["POST"])
+@app.route("/wsp/generate", methods=["POST"])
+@app.route("/bbbee/generate", methods=["POST"])
 @app.route("/coida/generate", methods=["POST"])
 @login_required
-def coida_generate():
-    from modules.coida import generate_was8
-    db = get_db()
-    company_info = db.execute("SELECT * FROM company_info LIMIT 1").fetchone()
-    ci = dict(company_info) if company_info else {}
-    ci["assessment_year"] = request.form.get("assessment_year", str(datetime.now().year))
-    data = generate_was8(db, ci)
-    return send_file(
-        io.BytesIO(data),
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True,
-        download_name="WAs8_Return.xlsx",
-    )
+def legacy_generate():
+    flash("Reports are now generated, versioned and stored on each compliance record.", "info")
+    return redirect(url_for("compliance_list"))
 
-
-# ─── API helpers ─────────────────────────────────────────────────────────────
 
 # ─── Checklist API ───────────────────────────────────────────────────────────
 
-def _base_module(scope):
-    """A scope like 'gbs:5' uses the base checklist definition 'gbs'."""
-    return scope.split(":", 1)[0] if scope else scope
+def _safe_back(default):
+    """Go back to the referring page only if it is on this site (no open redirect)."""
+    from urllib.parse import urlparse
+    ref = request.referrer
+    if ref:
+        u = urlparse(ref)
+        if u.netloc == request.host and u.scheme in ("http", "https") and u.path.startswith("/"):
+            return u.path + ("?" + u.query if u.query else "")
+    return default
+
+
+def _checklist_scope(db, scope, for_write=True):
+    """Validate a checklist scope string ('record:<id>'). Returns (record, checklist)
+    or aborts. Writes are refused once the record is submitted/archived."""
+    from modules.checklists import get_checklist
+    if not scope or not scope.startswith("record:"):
+        abort(400, description="Unknown checklist.")
+    rid = _int_or_none(scope.split(":", 1)[1])
+    r = rec.get_record(db, rid) if rid else None
+    if r is None or r["deleted"]:
+        abort(404, description="Unknown checklist.")
+    checklist = get_checklist(r["module"])
+    if checklist is None:
+        abort(400, description="This module has no checklist.")
+    if for_write and r["status"] in rec.CHECKLIST_LOCKED:
+        abort(409, description="The checklist was frozen when the record was submitted.")
+    return r, checklist
+
+
+def _checklist_progress_json(db, scope, checklist):
+    done, total, pct = checklist_progress(checklist, get_checklist_states(db, scope), get_custom_tasks(db, scope),
+                                          get_hidden_tasks(db, scope))
+    return {"ok": True, "done": done, "total": total, "percent": pct}
+
+
+def _valid_item_key(db, scope, checklist, item_key):
+    if item_key.startswith("custom-"):
+        cid = _int_or_none(item_key.split("-", 1)[1])
+        return bool(cid) and db.execute("SELECT 1 FROM custom_tasks WHERE id=? AND module=?", (cid, scope)).fetchone()
+    return any(it["key"] == item_key for st in checklist["steps"] for it in st["items"])
 
 
 @app.route("/checklist/toggle", methods=["POST"])
@@ -1557,50 +2361,40 @@ def _base_module(scope):
 def checklist_toggle():
     db = get_db()
     data = request.get_json(silent=True) or {}
-    module = data.get("module", "")
-    item_key = data.get("item_key", "")
+    scope = str(data.get("module", ""))
+    item_key = str(data.get("item_key", ""))[:60]
+    r, checklist = _checklist_scope(db, scope)
+    if not _valid_item_key(db, scope, checklist, item_key):
+        return jsonify({"ok": False, "error": "Unknown checklist item."}), 400
     checked = 1 if data.get("checked") else 0
-    if not module or not item_key:
-        return jsonify({"ok": False, "error": "missing module or item_key"}), 400
-
     db.execute(
         """INSERT INTO checklist_state (module, item_key, checked, updated_at)
            VALUES (?, ?, ?, datetime('now'))
            ON CONFLICT(module, item_key)
            DO UPDATE SET checked=excluded.checked, updated_at=datetime('now')""",
-        (module, item_key, checked),
+        (scope, item_key, checked),
     )
+    log_action("task_toggle", "task", "%s task '%s' in %s" % (
+        "Completed" if checked else "Un-checked", resolve_item_text(db, scope, item_key), friendly_scope(db, scope)),
+        target=scope, entity="compliance_record", entity_id=r["id"], commit=False)
     db.commit()
-
-    item_text = resolve_item_text(db, module, item_key)
-    log_action(
-        "task_toggle", "task",
-        "%s task '%s' in %s" % (
-            "Completed" if checked else "Un-checked", item_text, friendly_scope(db, module)),
-        target=module,
-    )
-
-    from modules.checklists import get_checklist
-    checklist = get_checklist(_base_module(module))
-    done = total = pct = 0
-    if checklist:
-        states = get_checklist_states(db, module)
-        custom = get_custom_tasks(db, module)
-        hidden = get_hidden_tasks(db, module)
-        done, total, pct = checklist_progress(checklist, states, custom, hidden)
-    return jsonify({"ok": True, "done": done, "total": total, "percent": pct})
+    return jsonify(_checklist_progress_json(db, scope, checklist))
 
 
-@app.route("/checklist/reset/<module>", methods=["POST"])
+@app.route("/checklist/reset/<path:module>", methods=["POST"])
 @login_required
 def checklist_reset(module):
     db = get_db()
+    r, _cl = _checklist_scope(db, module)
+    states = get_checklist_states(db, module)
     db.execute("DELETE FROM checklist_state WHERE module=?", (module,))
+    rec.add_event(db, r["id"], "checklist_reset", g.user, comment="Checklist progress reset",
+                  payload={"previous_states": states})
+    log_action("task_reset", "task", "Reset all checklist progress for %s" % friendly_scope(db, module),
+               target=module, entity="compliance_record", entity_id=r["id"], before=states, commit=False)
     db.commit()
-    log_action("task_reset", "task",
-               "Reset all checklist progress for %s" % friendly_scope(db, module), target=module)
-    flash("Checklist reset (custom tasks kept).", "info")
-    return redirect(request.referrer or url_for("dashboard"))
+    flash("Checklist reset (custom tasks kept; the previous progress is kept in the record's history).", "info")
+    return redirect(_safe_back(url_for("record_detail", record_id=r["id"]) + "#checklist"))
 
 
 @app.route("/checklist/task/add", methods=["POST"])
@@ -1608,35 +2402,20 @@ def checklist_reset(module):
 def checklist_task_add():
     db = get_db()
     data = request.get_json(silent=True) or request.form
-    module = (data.get("module") or "").strip()
-    step_key = (data.get("step_key") or "").strip()
-    text = (data.get("text") or "").strip()
-    if not module or not step_key or not text:
-        return jsonify({"ok": False, "error": "module, step_key and text are required"}), 400
-
-    cur = db.execute(
-        "INSERT INTO custom_tasks (module, step_key, text) VALUES (?,?,?)",
-        (module, step_key, text),
-    )
-    db.commit()
+    scope = (data.get("module") or "").strip()
+    step_key = (data.get("step_key") or "").strip()[:20]
+    text = (data.get("text") or "").strip()[:300]
+    r, checklist = _checklist_scope(db, scope)
+    if not text or not any(st["key"] == step_key for st in checklist["steps"]):
+        return jsonify({"ok": False, "error": "A valid step and task text are required."}), 400
+    cur = db.execute("INSERT INTO custom_tasks (module, step_key, text) VALUES (?,?,?)", (scope, step_key, text))
     new_id = cur.lastrowid
-    log_action("task_add", "task",
-               "Added custom task '%s' in %s" % (text, friendly_scope(db, module)), target=module)
-
-    from modules.checklists import get_checklist
-    checklist = get_checklist(_base_module(module))
-    done = total = pct = 0
-    if checklist:
-        states = get_checklist_states(db, module)
-        custom = get_custom_tasks(db, module)
-        hidden = get_hidden_tasks(db, module)
-        done, total, pct = checklist_progress(checklist, states, custom, hidden)
-
-    return jsonify({
-        "ok": True,
-        "task": {"id": new_id, "text": text, "key": "custom-%d" % new_id},
-        "done": done, "total": total, "percent": pct,
-    })
+    log_action("task_add", "task", "Added custom task '%s' in %s" % (text, friendly_scope(db, scope)), target=scope,
+               entity="compliance_record", entity_id=r["id"], commit=False)
+    db.commit()
+    out = _checklist_progress_json(db, scope, checklist)
+    out["task"] = {"id": new_id, "text": text, "key": "custom-%d" % new_id}
+    return jsonify(out)
 
 
 @app.route("/checklist/task/delete", methods=["POST"])
@@ -1644,96 +2423,50 @@ def checklist_task_add():
 def checklist_task_delete():
     db = get_db()
     data = request.get_json(silent=True) or request.form
-    task_id = data.get("task_id")
-    module = (data.get("module") or "").strip()
+    scope = (data.get("module") or "").strip()
+    task_id = _int_or_none(data.get("task_id"))
+    r, checklist = _checklist_scope(db, scope)
     if not task_id:
         return jsonify({"ok": False, "error": "task_id required"}), 400
-
-    deleted_text = resolve_item_text(db, module, "custom-%s" % task_id)
-    db.execute("DELETE FROM custom_tasks WHERE id=? AND module=?", (task_id, module))
-    db.execute(
-        "DELETE FROM checklist_state WHERE module=? AND item_key=?",
-        (module, "custom-%s" % task_id),
-    )
+    deleted_text = resolve_item_text(db, scope, "custom-%s" % task_id)
+    db.execute("DELETE FROM custom_tasks WHERE id=? AND module=?", (task_id, scope))
+    db.execute("DELETE FROM checklist_state WHERE module=? AND item_key=?", (scope, "custom-%s" % task_id))
+    log_action("task_delete", "task", "Deleted custom task '%s' in %s" % (deleted_text, friendly_scope(db, scope)),
+               target=scope, entity="compliance_record", entity_id=r["id"], commit=False)
     db.commit()
-    log_action("task_delete", "task",
-               "Deleted custom task '%s' in %s" % (deleted_text, friendly_scope(db, module)),
-               target=module)
-
-    from modules.checklists import get_checklist
-    checklist = get_checklist(_base_module(module))
-    done = total = pct = 0
-    if checklist:
-        states = get_checklist_states(db, module)
-        custom = get_custom_tasks(db, module)
-        hidden = get_hidden_tasks(db, module)
-        done, total, pct = checklist_progress(checklist, states, custom, hidden)
-
-    return jsonify({"ok": True, "done": done, "total": total, "percent": pct})
+    return jsonify(_checklist_progress_json(db, scope, checklist))
 
 
 @app.route("/checklist/task/hide", methods=["POST"])
 @login_required
 def checklist_task_hide():
-    """Hide a default (predefined) item from this module/scope."""
     db = get_db()
     data = request.get_json(silent=True) or request.form
-    module = (data.get("module") or "").strip()
-    item_key = (data.get("item_key") or "").strip()
-    if not module or not item_key:
-        return jsonify({"ok": False, "error": "module and item_key required"}), 400
-
-    item_text = resolve_item_text(db, module, item_key)
-    db.execute(
-        """INSERT INTO hidden_tasks (module, item_key) VALUES (?, ?)
-           ON CONFLICT(module, item_key) DO NOTHING""",
-        (module, item_key),
-    )
-    # Also clear any checkbox state for this hidden item
-    db.execute(
-        "DELETE FROM checklist_state WHERE module=? AND item_key=?",
-        (module, item_key),
-    )
+    scope = (data.get("module") or "").strip()
+    item_key = (data.get("item_key") or "").strip()[:60]
+    r, checklist = _checklist_scope(db, scope)
+    if not _valid_item_key(db, scope, checklist, item_key) or item_key.startswith("custom-"):
+        return jsonify({"ok": False, "error": "Unknown checklist item."}), 400
+    db.execute("INSERT INTO hidden_tasks (module, item_key) VALUES (?, ?) ON CONFLICT(module, item_key) DO NOTHING",
+               (scope, item_key))
+    db.execute("DELETE FROM checklist_state WHERE module=? AND item_key=?", (scope, item_key))
+    log_action("task_hide", "task", "Removed default task '%s' from %s" % (resolve_item_text(db, scope, item_key),
+               friendly_scope(db, scope)), target=scope, entity="compliance_record", entity_id=r["id"], commit=False)
     db.commit()
-    log_action("task_hide", "task",
-               "Removed default task '%s' from %s" % (item_text, friendly_scope(db, module)),
-               target=module)
-
-    from modules.checklists import get_checklist
-    checklist = get_checklist(_base_module(module))
-    done = total = pct = 0
-    if checklist:
-        states = get_checklist_states(db, module)
-        custom = get_custom_tasks(db, module)
-        hidden = get_hidden_tasks(db, module)
-        done, total, pct = checklist_progress(checklist, states, custom, hidden)
-
-    return jsonify({"ok": True, "done": done, "total": total, "percent": pct})
+    return jsonify(_checklist_progress_json(db, scope, checklist))
 
 
 @app.route("/checklist/restore-defaults/<path:module>", methods=["POST"])
 @login_required
 def checklist_restore_defaults(module):
-    """Restore all hidden default items for a module/scope."""
     db = get_db()
+    r, _cl = _checklist_scope(db, module)
     db.execute("DELETE FROM hidden_tasks WHERE module=?", (module,))
+    log_action("task_restore_defaults", "task", "Restored hidden default tasks for %s" % friendly_scope(db, module),
+               target=module, entity="compliance_record", entity_id=r["id"], commit=False)
     db.commit()
-    log_action("task_restore_defaults", "task",
-               "Restored hidden default tasks for %s" % friendly_scope(db, module), target=module)
     flash("Default tasks restored.", "info")
-    return redirect(request.referrer or url_for("dashboard"))
-
-
-@app.route("/api/bbbee/level", methods=["POST"])
-@login_required
-def api_bbbee_level():
-    from modules.bbbee import calculate_level
-    data = request.get_json()
-    scorecard_type = data.get("scorecard_type", "Generic")
-    total = float(data.get("total_score", 0))
-    black_pct = float(data.get("black_owned_percent", 0))
-    level, rating = calculate_level(scorecard_type, total, black_pct)
-    return jsonify({"level": level, "rating": rating})
+    return redirect(_safe_back(url_for("record_detail", record_id=r["id"]) + "#checklist"))
 
 
 # ─── Audit log (admin only) ──────────────────────────────────────────────────
@@ -1744,7 +2477,14 @@ AUDIT_CATEGORIES = [
     ("task", "Tasks"),
     ("trash", "Trash bin"),
     ("user", "User management"),
-    ("deadline", "Deadlines"),
+    ("compliance", "Compliance records"),
+    ("report", "Reports"),
+    ("employee", "Employees"),
+    ("company", "Company profile"),
+    ("rules", "Regulatory rules"),
+    ("wsp", "WSP / ATR"),
+    ("coida", "COIDA"),
+    ("bbbee", "B-BBEE"),
 ]
 
 
@@ -1814,12 +2554,16 @@ def users_admin():
     return render_template("users.html", users=rows)
 
 
+USERNAME_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-@")
+
+
 @app.route("/users/add", methods=["POST"])
 @admin_required
 def users_add():
     db = get_db()
     username = (request.form.get("username") or "").strip()
-    full_name = (request.form.get("full_name") or "").strip()
+    full_name = (request.form.get("full_name") or "").strip()[:120]
+    email = (request.form.get("email") or "").strip()[:254]
     password = request.form.get("password") or ""
     role = request.form.get("role") or "user"
     if role not in ("admin", "user"):
@@ -1827,18 +2571,31 @@ def users_add():
     if not username or not password:
         flash("Username and password are required.", "danger")
         return redirect(url_for("users_admin"))
-    existing = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+    if len(username) > 64 or not set(username) <= USERNAME_OK:
+        flash("Username may only contain letters, digits and . _ - @ (max 64).", "danger")
+        return redirect(url_for("users_admin"))
+    if email and ("@" not in email or "." not in email.rsplit("@", 1)[-1] or " " in email):
+        flash("That email address is not valid.", "danger")
+        return redirect(url_for("users_admin"))
+    problem = password_problem(password, username)
+    if problem:
+        flash(problem, "danger")
+        return redirect(url_for("users_admin"))
+    existing = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (username,)).fetchone()
     if existing:
         flash("That username already exists.", "danger")
         return redirect(url_for("users_admin"))
-    db.execute(
-        "INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
-        (username, generate_password_hash(password), role, full_name or username),
+    cur = db.execute(
+        """INSERT INTO users (username, password_hash, role, full_name, email, must_change_password)
+           VALUES (?,?,?,?,?,1)""",
+        (username, generate_password_hash(password), role, full_name or username, email or None),
     )
+    log_action("user_create", "user", f"Created {role} account '{username}'", target=username,
+               entity="user", entity_id=cur.lastrowid,
+               after={"username": username, "role": role, "full_name": full_name, "email": email},
+               commit=False)
     db.commit()
-    log_action("user_create", "user",
-               f"Created {role} account '{username}'", target=username)
-    flash(f"User '{username}' created ({role}).", "success")
+    flash(f"User '{username}' created ({role}). They must change the password at first sign-in.", "success")
     return redirect(url_for("users_admin"))
 
 
@@ -1851,16 +2608,24 @@ def users_reset(user_id):
         flash("User not found.", "danger")
         return redirect(url_for("users_admin"))
     new_password = request.form.get("password") or ""
-    if not new_password:
-        flash("Please provide a new password.", "danger")
+    problem = password_problem(new_password, user["username"]) if new_password else "Please provide a new password."
+    if problem:
+        flash(problem, "danger")
         return redirect(url_for("users_admin"))
-    db.execute("UPDATE users SET password_hash=? WHERE id=?",
-               (generate_password_hash(new_password), user_id))
-    db.commit()
+    db.execute(
+        """UPDATE users SET password_hash=?, must_change_password=1, failed_logins=0, locked_until=NULL,
+           password_changed_at=datetime('now'), session_version=session_version+1 WHERE id=?""",
+        (generate_password_hash(new_password), user_id))
     log_action("user_reset_password", "user",
-               f"Reset password for '{user['username']}'", target=user["username"])
-    flash(f"Password reset for '{user['username']}'.", "success")
+               f"Reset password for '{user['username']}' (signed out everywhere)", target=user["username"],
+               entity="user", entity_id=user_id, commit=False)
+    db.commit()
+    flash(f"Password reset for '{user['username']}'. They must change it at next sign-in.", "success")
     return redirect(url_for("users_admin"))
+
+
+def _active_admin_count(db):
+    return db.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1").fetchone()[0]
 
 
 @app.route("/users/<int:user_id>/toggle-role", methods=["POST"])
@@ -1871,17 +2636,48 @@ def users_toggle_role(user_id):
     if not user:
         flash("User not found.", "danger")
         return redirect(url_for("users_admin"))
+    if user["id"] == g.user["id"]:
+        flash("You cannot change your own role. Ask another administrator.", "danger")
+        return redirect(url_for("users_admin"))
     new_role = "user" if user["role"] == "admin" else "admin"
-    # Guard: don't allow removing the last admin
-    admins = db.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
-    if user["role"] == "admin" and admins <= 1:
+    if user["role"] == "admin" and user["active"] and _active_admin_count(db) <= 1:
         flash("Cannot demote the last administrator.", "danger")
         return redirect(url_for("users_admin"))
-    db.execute("UPDATE users SET role=? WHERE id=?", (new_role, user_id))
-    db.commit()
+    db.execute("UPDATE users SET role=?, session_version=session_version+1 WHERE id=?", (new_role, user_id))
     log_action("user_role_change", "user",
-               f"Changed role of '{user['username']}' to {new_role}", target=user["username"])
+               f"Changed role of '{user['username']}' to {new_role}", target=user["username"],
+               entity="user", entity_id=user_id,
+               before={"role": user["role"]}, after={"role": new_role}, commit=False)
+    db.commit()
     flash(f"'{user['username']}' is now {new_role}.", "success")
+    return redirect(url_for("users_admin"))
+
+
+@app.route("/users/<int:user_id>/toggle-active", methods=["POST"])
+@admin_required
+def users_toggle_active(user_id):
+    """Disable/enable an account. Disabling keeps the user's history intact and is
+    the normal way to remove access."""
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for("users_admin"))
+    if user["id"] == g.user["id"]:
+        flash("You cannot disable your own account.", "danger")
+        return redirect(url_for("users_admin"))
+    if user["active"] and user["role"] == "admin" and _active_admin_count(db) <= 1:
+        flash("Cannot disable the last administrator.", "danger")
+        return redirect(url_for("users_admin"))
+    new_active = 0 if user["active"] else 1
+    db.execute("UPDATE users SET active=?, session_version=session_version+1 WHERE id=?",
+               (new_active, user_id))
+    log_action("user_enable" if new_active else "user_disable", "user",
+               f"{'Enabled' if new_active else 'Disabled'} account '{user['username']}'",
+               target=user["username"], entity="user", entity_id=user_id,
+               before={"active": user["active"]}, after={"active": new_active}, commit=False)
+    db.commit()
+    flash(f"'{user['username']}' {'enabled' if new_active else 'disabled'}.", "success")
     return redirect(url_for("users_admin"))
 
 
@@ -1893,17 +2689,23 @@ def users_delete(user_id):
     if not user:
         flash("User not found.", "danger")
         return redirect(url_for("users_admin"))
-    if user["username"] == session.get("username"):
+    if user["id"] == g.user["id"]:
         flash("You cannot delete your own account.", "danger")
         return redirect(url_for("users_admin"))
-    if user["role"] == "admin":
-        admins = db.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
-        if admins <= 1:
-            flash("Cannot delete the last administrator.", "danger")
-            return redirect(url_for("users_admin"))
-    db.execute("DELETE FROM users WHERE id=?", (user_id,))
-    db.commit()
-    log_action("user_delete", "user", f"Deleted account '{user['username']}'", target=user["username"])
+    if user["role"] == "admin" and user["active"] and _active_admin_count(db) <= 1:
+        flash("Cannot delete the last administrator.", "danger")
+        return redirect(url_for("users_admin"))
+    try:
+        db.execute("DELETE FROM users WHERE id=?", (user_id,))
+        log_action("user_delete", "user", f"Deleted account '{user['username']}'", target=user["username"],
+                   entity="user", entity_id=user_id,
+                   before={"username": user["username"], "role": user["role"]}, commit=False)
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash(f"'{user['username']}' owns compliance history and cannot be deleted. Disable the account instead.",
+              "warning")
+        return redirect(url_for("users_admin"))
     flash(f"User '{user['username']}' deleted.", "warning")
     return redirect(url_for("users_admin"))
 
@@ -1916,13 +2718,27 @@ def inject_now():
         "now": datetime.now,
         "current_user": session.get("username", ""),
         "current_full_name": session.get("full_name", session.get("username", "")),
-        "current_role": session.get("role", ""),
-        "is_admin": session.get("role") == "admin",
+        "current_role": g.user["role"] if g.get("user") else "",
+        "is_admin": bool(g.get("user")) and g.user["role"] == "admin",
         "session_remember": session.get("remember", False),
         "idle_warning_after": IDLE_WARNING_AFTER,
         "logout_countdown": LOGOUT_COUNTDOWN,
+        "csrf_token": csrf_token,
     }
 
 
+@app.route("/healthz")
+def healthz():
+    """Container health check: the app is up and the database answers."""
+    try:
+        get_db().execute("SELECT 1").fetchone()
+    except sqlite3.Error:
+        return jsonify({"ok": False}), 503
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Local development only. Production runs under gunicorn (see Dockerfile).
+    # Bound to localhost; the interactive debugger is never exposed to the network.
+    logging.basicConfig(level=logging.INFO)
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1", host="127.0.0.1", port=5000)

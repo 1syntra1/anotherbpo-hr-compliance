@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Company Profile{% endblock %}
+{% block page_title %}Company Profile{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <div class="col-xl-8">
+    <form method="POST" action="{{ url_for('company') }}" class="card border-0 shadow-sm"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-building me-2 text-teal" aria-hidden="true"></i>Employer details used on every report</div>
+      <div class="card-body">
+        {% for grp, fields in groups %}
+        <h3 class="h6 fw-bold text-navy mt-2">{{ grp }}</h3>
+        <div class="row g-2 mb-3">
+          {% for col, label in fields %}
+          <div class="col-md-6">
+            <label for="f-{{ col }}" class="form-label small fw-semibold mb-0">{{ label }}</label>
+            {% if col == 'seta' %}
+              <select id="f-{{ col }}" name="seta" class="form-select form-select-sm"><option value="">—</option>
+                {% for s in setas %}<option {{ 'selected' if profile.seta == s }}>{{ s }}</option>{% endfor %}</select>
+            {% elif col == 'designated_employer' %}
+              <select id="f-{{ col }}" name="designated_employer" class="form-select form-select-sm"><option value="">—</option>
+                {% for s in ['Yes','No'] %}<option {{ 'selected' if profile.designated_employer == s }}>{{ s }}</option>{% endfor %}</select>
+            {% elif col in ('physical_address','postal_address','ownership_notes') %}
+              <textarea id="f-{{ col }}" name="{{ col }}" rows="2" class="form-control form-control-sm" maxlength="500">{{ profile.get(col) or '' }}</textarea>
+            {% else %}
+              <input id="f-{{ col }}" name="{{ col }}" class="form-control form-control-sm" maxlength="500"
+                     value="{{ profile.get(col) if profile.get(col) is not none else '' }}"
+                     {% if col in ('skills_levy','annual_turnover','black_ownership_pct','black_women_ownership_pct') %}inputmode="decimal"{% endif %}
+                     {% if col == 'contact_email' %}type="email"{% endif %}
+                     {% if col == 'financial_year_end' %}placeholder="MM-DD" pattern="(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"{% endif %}>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+        <small class="text-muted">Saving creates a new version. Reports already generated keep the version they used.</small>
+        <button class="btn btn-teal btn-sm px-4">Save new version</button>
+      </div>
+    </form>
+  </div>
+  <div class="col-xl-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-clock-history me-2 text-teal" aria-hidden="true"></i>Version history</div>
+      <ul class="list-group list-group-flush small">
+        {% for h in history %}
+        <li class="list-group-item">Version {{ h.id }} · {{ h.created_at }}{% if h.by_name %} · {{ h.by_name }}{% endif %}{% if loop.first %} <span class="badge bg-success-subtle text-success-emphasis border">current</span>{% endif %}</li>
+        {% else %}
+        <li class="list-group-item text-muted">No profile saved yet.</li>
+        {% endfor %}
+      </ul>
+      <div class="card-body small text-muted">Field-level changes (old and new values) are in the audit log.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

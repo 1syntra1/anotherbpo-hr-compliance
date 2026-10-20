@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% from "_checklist.html" import render_checklist with context %}
+{% block title %}{{ title }} {{ r.period_label }}{% endblock %}
+{% block page_title %}{{ title }} — {{ r.period_label }}{% endblock %}
+
+{% block content %}
+{% set badge = {'DRAFT':'bg-light text-dark border','PREPARED':'bg-info-subtle text-info-emphasis border','AWAITING_REVIEW':'bg-warning-subtle text-warning-emphasis border','REQUIRES_CHANGES':'bg-danger-subtle text-danger-emphasis border','APPROVED':'bg-success-subtle text-success-emphasis border','SUBMITTED':'bg-success text-white','ARCHIVED':'bg-secondary text-white'} %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{{ url_for('compliance_list') }}">Compliance records</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('compliance_list', module=r.module) }}">{{ title }}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ r.period_label }}</li>
+  </ol>
+</nav>
+
+{% if r.deleted %}
+<div class="alert alert-secondary"><i class="bi bi-trash3 me-1" aria-hidden="true"></i>This record is in the trash. It is read-only and kept for its history.</div>
+{% endif %}
+
+<!-- Header -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between gap-3">
+      <div>
+        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+          <h2 class="h5 fw-bold text-navy mb-0">{{ title }} · {{ r.period_label }}</h2>
+          <span class="badge {{ badge[r.status] }}" title="Workflow status">{{ status_labels[r.status] }}</span>
+          <span class="badge {{ {'overdue':'compliance-badge-red','due_soon':'compliance-badge-amber','upcoming':'compliance-badge-teal','done':'compliance-badge-green'}.get(state[0], 'bg-light text-secondary border') }}">{{ state[1] }}</span>
+        </div>
+        <div class="small text-muted">
+          {{ module.authority }} ·
+          Period {{ r.period_start or '?' }} to {{ r.period_end or '?' }} ·
+          Due {{ r.due_date or 'not set' }}
+          {% if r.official_source %} · <a href="{{ r.official_source }}" target="_blank" rel="noopener noreferrer">Official source <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>{% endif %}
+        </div>
+        <div class="small mt-1">
+          Owner: <strong>{{ names.get(r.owner_id, '—') }}</strong> ·
+          Reviewer: <strong>{{ names.get(r.reviewer_id, '—') }}</strong>
+          {% if r.prepared_by %} · Prepared by: <strong>{{ names.get(r.prepared_by, '—') }}</strong>{% endif %}
+        </div>
+        {% if rule %}
+        <div class="small mt-1">Rules: {{ rule.code }} v{{ rule.version }}
+          {% if rule.verified %}<span class="badge bg-success-subtle text-success-emphasis border">verified</span>
+          {% else %}<a href="{{ url_for('rules_register') }}" class="badge bg-warning-subtle text-warning-emphasis border text-decoration-none">unverified — check before filing</a>{% endif %}
+        </div>
+        {% endif %}
+        {% if gbs_project_id %}<div class="small mt-1"><a href="{{ url_for('gbs_project', project_id=gbs_project_id) }}"><i class="bi bi-globe2 me-1" aria-hidden="true"></i>Open the GBS claim details</a></div>{% endif %}
+        {% if module.page and r.module != 'gbs' %}<div class="small mt-1"><a href="{{ url_for(module.page, record=r.id) }}"><i class="bi bi-pencil-square me-1" aria-hidden="true"></i>Open the {{ title }} data for this period</a></div>{% endif %}
+      </div>
+      {% if not r.deleted %}
+      <div class="text-end">
+        <div class="small fw-semibold text-muted mb-1">Workflow</div>
+        <div class="d-flex flex-wrap gap-1 justify-content-end">
+          {% for a in actions if a.action != 'submit' %}
+            {% if a.ok %}
+            <button type="button" class="btn btn-sm {{ 'btn-teal' if a.action in ('approve','request_review','resubmit','prepare') else 'btn-outline-secondary' }}"
+                    data-bs-toggle="modal" data-bs-target="#act-{{ a.action }}">{{ a.label }}</button>
+            {% else %}
+            <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" title="{{ a.why }}">
+              <button type="button" class="btn btn-sm btn-outline-secondary" disabled>{{ a.label }}</button>
+            </span>
+            {% endif %}
+          {% endfor %}
+          {% for a in actions if a.action == 'submit' %}
+            <a href="#submission" class="btn btn-sm btn-teal {{ '' if a.ok else 'disabled' }}">Record submission</a>
+          {% endfor %}
+        </div>
+        {% if checks_ok is false %}
+        <div class="small text-danger mt-2"><i class="bi bi-x-octagon-fill me-1" aria-hidden="true"></i>Checks failing or required report missing — cannot be prepared, approved or submitted.</div>
+        {% elif checks_ok %}
+        <div class="small text-success mt-2"><i class="bi bi-check-circle-fill me-1" aria-hidden="true"></i>All checks pass on the latest reports.</div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Action modals -->
+{% for a in actions if a.ok and a.action != 'submit' %}
+<div class="modal fade" id="act-{{ a.action }}" tabindex="-1" aria-labelledby="act-{{ a.action }}-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="POST" action="{{ url_for('record_transition', record_id=r.id) }}" class="modal-content border-0 shadow"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="{{ a.action }}">
+      <input type="hidden" name="row_version" value="{{ r.row_version }}">
+      <div class="modal-header">
+        <h3 class="modal-title h6" id="act-{{ a.action }}-title">{{ a.label }} — {{ title }} {{ r.period_label }}</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <label for="c-{{ a.action }}" class="form-label small fw-semibold">{{ 'Reason (required)' if a.needs_comment else 'Comment (optional)' }}</label>
+        <textarea id="c-{{ a.action }}" name="comment" class="form-control" rows="3" maxlength="2000" {{ 'required' if a.needs_comment }}></textarea>
+        {% if a.action == 'approve' and r.prepared_by == g.user.id and is_admin %}
+        <label for="ovr" class="form-label small fw-semibold mt-3 text-danger">You prepared this record. Override reason (required to self-approve)</label>
+        <textarea id="ovr" name="override_reason" class="form-control" rows="2" required maxlength="500"></textarea>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-teal btn-sm">{{ a.label }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<div class="row g-4">
+  <div class="col-xl-8">
+
+    <!-- Reports -->
+    {% if report_types %}
+    <div class="card border-0 shadow-sm mb-4" id="reports">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-file-earmark-spreadsheet me-2 text-teal" aria-hidden="true"></i>Reports</div>
+      <div class="card-body">
+        {% if editable %}
+        <form method="POST" action="{{ url_for('record_generate', record_id=r.id) }}" class="row g-2 align-items-end mb-3"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <div class="col-md-5">
+            <label for="rt" class="form-label small fw-semibold">Generate a new version</label>
+            <select id="rt" name="report_type" class="form-select form-select-sm">
+              {% for k, spec in report_types.items() %}<option value="{{ k }}">{{ spec.label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-md-5">
+            <label for="reason" class="form-label small fw-semibold">Reason (required when regenerating)</label>
+            <input id="reason" name="reason" class="form-control form-control-sm" maxlength="300" placeholder="e.g. Corrected employee information">
+          </div>
+          <div class="col-md-2"><button class="btn btn-teal btn-sm w-100">Generate</button></div>
+          <div class="col-12"><small class="text-muted">Each version is stored permanently with a frozen copy of the data, company details and rules it used. Old versions never change.</small></div>
+        </form>
+        {% else %}
+        <p class="small text-muted"><i class="bi bi-lock-fill me-1" aria-hidden="true"></i>Reports are frozen while the record is {{ status_labels[r.status]|lower }}.</p>
+        {% endif %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <caption class="visually-hidden">Stored report versions</caption>
+            <thead class="table-light"><tr><th scope="col">Report</th><th scope="col">Version</th><th scope="col">Generated</th><th scope="col">Checks</th><th scope="col" class="text-end">Actions</th></tr></thead>
+            <tbody>
+            {% for v in versions %}
+              <tr class="{{ '' if v.id in latest_ids else 'text-muted' }}">
+                <td>{{ v.label }}{% if v.id in latest_ids %} <span class="badge bg-light text-dark border">latest</span>{% endif %}</td>
+                <td>v{{ v.version }}{% if v.reason %}<br><small class="text-muted">{{ v.reason }}</small>{% endif %}</td>
+                <td class="small">{{ v.generated_at }}<br>{{ v.generated_by_name }}</td>
+                <td>
+                  {% if v.checks_ok %}<span class="badge bg-success-subtle text-success-emphasis border"><i class="bi bi-check-lg" aria-hidden="true"></i> PASS</span>
+                  {% else %}<span class="badge bg-danger-subtle text-danger-emphasis border"><i class="bi bi-x-lg" aria-hidden="true"></i> FAIL</span>{% endif %}
+                  <button class="btn btn-link btn-sm p-0 ms-1" type="button" data-bs-toggle="collapse" data-bs-target="#chk{{ v.id }}" aria-expanded="false" aria-controls="chk{{ v.id }}">details</button>
+                </td>
+                <td class="text-end text-nowrap">
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('report_download', version_id=v.id) }}" title="Download" aria-label="Download {{ v.file_name }}"><i class="bi bi-download" aria-hidden="true"></i></a>
+                  <form method="POST" action="{{ url_for('report_verify', version_id=v.id) }}" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-secondary" title="Re-create from stored data and compare" aria-label="Verify {{ v.file_name }}"><i class="bi bi-patch-check" aria-hidden="true"></i></button>
+                  </form>
+                </td>
+              </tr>
+              <tr class="collapse" id="chk{{ v.id }}"><td colspan="5" class="bg-light">
+                <ul class="small mb-1">
+                {% for c in v.checks %}
+                  <li class="{{ 'text-success' if c.ok else 'text-danger fw-semibold' }}">{{ 'PASS' if c.ok else 'FAIL' }} — {{ c.check }}: expected {{ c.expected }}, got {{ c.actual }}{% if c.detail %} ({{ c.detail }}){% endif %}</li>
+                {% endfor %}
+                </ul>
+                <div class="small text-muted">File SHA-256 {{ v.sha256[:16] }}… · data fingerprint {{ v.snapshot_sha256[:16] }}… · company profile v{{ v.company_profile_id or '—' }} · rule set #{{ v.rule_set_id or '—' }}</div>
+              </td></tr>
+            {% else %}
+              <tr><td colspan="5" class="text-muted small text-center py-3">No reports generated yet.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Submission -->
+    <div class="card border-0 shadow-sm mb-4" id="submission">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-send-check me-2 text-teal" aria-hidden="true"></i>Submission</div>
+      <div class="card-body">
+        {% for s in submissions %}
+        <div class="border rounded p-3 mb-3 small">
+          <div><strong>Submitted:</strong> {{ s.submitted_on }} by {{ s.submitted_by_name }}</div>
+          <div><strong>Reference:</strong> {{ s.reference_no }}{% if s.confirmation_no %} · <strong>Confirmation:</strong> {{ s.confirmation_no }}{% endif %}</div>
+          {% if s.notes %}<div><strong>Notes:</strong> {{ s.notes }}</div>{% endif %}
+          <div class="text-muted">Recorded {{ s.recorded_at }} · report versions {{ s.report_version_ids or '—' }}</div>
+        </div>
+        {% endfor %}
+        {% if r.status == 'APPROVED' and not r.deleted %}
+        <form method="POST" action="{{ url_for('record_transition', record_id=r.id) }}" class="row g-2"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="submit"><input type="hidden" name="row_version" value="{{ r.row_version }}">
+          <div class="col-md-4"><label for="so" class="form-label small fw-semibold">Date submitted</label><input id="so" type="date" name="submitted_on" class="form-control form-control-sm" max="{{ today }}" value="{{ today }}" required></div>
+          <div class="col-md-4"><label for="ref" class="form-label small fw-semibold">Reference number</label><input id="ref" name="reference_no" class="form-control form-control-sm" required maxlength="100"></div>
+          <div class="col-md-4"><label for="conf" class="form-label small fw-semibold">Confirmation number</label><input id="conf" name="confirmation_no" class="form-control form-control-sm" maxlength="100"></div>
+          <div class="col-md-6"><label for="sb" class="form-label small fw-semibold">Submitted by</label><input id="sb" name="submitted_by_name" class="form-control form-control-sm" value="{{ g.user.full_name or g.user.username }}" maxlength="120"></div>
+          <div class="col-md-6"><label for="sn" class="form-label small fw-semibold">Notes</label><input id="sn" name="notes" class="form-control form-control-sm" maxlength="2000"></div>
+          <div class="col-12"><button class="btn btn-teal btn-sm" onclick="return confirm('Record this submission? The record and its reports will be locked.');">Record submission and lock</button>
+            <small class="text-muted ms-2">Upload the confirmation / receipt below afterwards.</small></div>
+        </form>
+        {% elif not submissions %}
+        <p class="small text-muted mb-0">The submission is recorded once the record is approved.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Evidence -->
+    <div class="card border-0 shadow-sm mb-4" id="evidence">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-paperclip me-2 text-teal" aria-hidden="true"></i>Evidence <span class="badge bg-secondary">{{ evidence|length }}</span></div>
+      <div class="card-body">
+        <ul class="list-unstyled small mb-3">
+        {% for e in evidence %}
+          <li class="d-flex justify-content-between border-bottom py-1">
+            <span><i class="bi bi-file-earmark me-1" aria-hidden="true"></i><a href="{{ url_for('evidence_download', evidence_id=e.id) }}">{{ e.original_name }}</a>
+              <span class="badge bg-light text-dark border">{{ e.kind }}</span>{% if e.description %} — {{ e.description }}{% endif %}</span>
+            <span class="text-muted">{{ (e.size / 1024)|round(1) }} KB · {{ e.uploaded_at }} · {{ names.get(e.uploaded_by, '') }}</span>
+          </li>
+        {% else %}
+          <li class="text-muted">No evidence yet.</li>
+        {% endfor %}
+        </ul>
+        {% if not r.deleted and r.status != 'ARCHIVED' %}
+        <form method="POST" action="{{ url_for('record_evidence', record_id=r.id) }}" enctype="multipart/form-data" class="row g-2 align-items-end"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <div class="col-md-4"><label for="ek" class="form-label small fw-semibold">Kind</label>
+            <select id="ek" name="kind" class="form-select form-select-sm">{% for k in evidence_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
+          <div class="col-md-4"><label for="ef" class="form-label small fw-semibold">File ({{ evidence_exts|join(', ') }})</label>
+            <input id="ef" type="file" name="file" class="form-control form-control-sm" required accept="{% for x in evidence_exts %}.{{ x }}{{ ',' if not loop.last }}{% endfor %}"></div>
+          <div class="col-md-3"><label for="ed" class="form-label small fw-semibold">Description</label><input id="ed" name="description" class="form-control form-control-sm" maxlength="300"></div>
+          <div class="col-md-1"><button class="btn btn-teal btn-sm w-100" aria-label="Upload evidence"><i class="bi bi-upload" aria-hidden="true"></i></button></div>
+          <div class="col-12"><small class="text-muted">Evidence is permanent: files cannot be removed once added. Avoid uploading more personal information than the obligation needs.</small></div>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Checklist -->
+    {% if cl %}
+    <div class="mb-4" id="checklist">
+      {{ render_checklist(cl.scope, cl.checklist, cl.states, cl.done, cl.total, cl.pct, cl.custom, cl.hidden, cl.locked) }}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-xl-4">
+    <!-- Details -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-person-gear me-2 text-teal" aria-hidden="true"></i>Responsibility &amp; dates</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('record_details', record_id=r.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="row_version" value="{{ r.row_version }}">
+          <fieldset {{ 'disabled' if r.deleted or r.status == 'ARCHIVED' }}>
+          <div class="mb-2"><label for="own" class="form-label small fw-semibold">Owner</label>
+            <select id="own" name="owner_id" class="form-select form-select-sm"><option value="">—</option>
+              {% for u in users %}<option value="{{ u.id }}" {{ 'selected' if u.id == r.owner_id }}>{{ u.full_name or u.username }}</option>{% endfor %}</select></div>
+          <div class="mb-2"><label for="rev" class="form-label small fw-semibold">Reviewer</label>
+            <select id="rev" name="reviewer_id" class="form-select form-select-sm"><option value="">—</option>
+              {% for u in users %}<option value="{{ u.id }}" {{ 'selected' if u.id == r.reviewer_id }}>{{ u.full_name or u.username }}</option>{% endfor %}</select></div>
+          <div class="mb-2"><label for="due" class="form-label small fw-semibold">Due date</label><input id="due" type="date" name="due_date" class="form-control form-control-sm" value="{{ r.due_date or '' }}"></div>
+          {% if editable %}
+          <div class="row g-2 mb-2">
+            <div class="col"><label for="ps" class="form-label small fw-semibold">Period start</label><input id="ps" type="date" name="period_start" class="form-control form-control-sm" value="{{ r.period_start or '' }}"></div>
+            <div class="col"><label for="pe" class="form-label small fw-semibold">Period end</label><input id="pe" type="date" name="period_end" class="form-control form-control-sm" value="{{ r.period_end or '' }}"></div>
+          </div>
+          {% endif %}
+          <div class="mb-2"><label for="os" class="form-label small fw-semibold">Official source (URL)</label><input id="os" type="url" name="official_source" class="form-control form-control-sm" value="{{ r.official_source or '' }}"></div>
+          <div class="mb-2"><label for="lr" class="form-label small fw-semibold">Requirement last reviewed</label><input id="lr" type="date" name="last_reviewed_at" class="form-control form-control-sm" value="{{ r.last_reviewed_at or '' }}"></div>
+          <div class="mb-3"><label for="nt" class="form-label small fw-semibold">Notes</label><textarea id="nt" name="notes" rows="3" class="form-control form-control-sm" maxlength="4000">{{ r.notes or '' }}</textarea></div>
+          <button class="btn btn-teal btn-sm w-100">Save</button>
+          </fieldset>
+        </form>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-clock-history me-2 text-teal" aria-hidden="true"></i>Timeline</div>
+      <div class="card-body">
+        <ol class="list-unstyled small mb-0">
+        {% for e in timeline|reverse %}
+          <li class="border-start border-2 ps-3 pb-3 position-relative">
+            <div class="fw-semibold">{{ e.event|replace('_', ' ')|capitalize }}{% if e.to_status and e.from_status %} → {{ status_labels.get(e.to_status, e.to_status) }}{% endif %}</div>
+            <div class="text-muted">{{ e.at }} · {{ e.username }}</div>
+            {% if e.comment %}<div>{{ e.comment }}</div>{% endif %}
+          </li>
+        {% endfor %}
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) { new bootstrap.Tooltip(el); });
+</script>
+{% endblock %}

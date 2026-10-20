@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Compliance Records{% endblock %}
+{% block page_title %}Compliance Records{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom py-3">
+        <form method="GET" class="row g-2 align-items-end">
+          <div class="col-sm-5"><label for="fm" class="form-label small fw-semibold mb-0">Module</label>
+            <select id="fm" name="module" class="form-select form-select-sm"><option value="">All modules</option>
+              {% for k, m in modules.items() %}<option value="{{ k }}" {{ 'selected' if f_module == k }}>{{ m.title }}</option>{% endfor %}</select></div>
+          <div class="col-sm-5"><label for="fs" class="form-label small fw-semibold mb-0">Status</label>
+            <select id="fs" name="status" class="form-select form-select-sm"><option value="">All statuses</option>
+              {% for k, l in statuses.items() %}<option value="{{ k }}" {{ 'selected' if f_status == k }}>{{ l }}</option>{% endfor %}</select></div>
+          <div class="col-sm-2"><button class="btn btn-sm btn-outline-secondary w-100">Filter</button></div>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <caption class="visually-hidden">Compliance records</caption>
+          <thead class="table-light"><tr><th class="ps-4" scope="col">Obligation</th><th scope="col">Period</th><th scope="col">Due</th><th scope="col">Status</th><th scope="col">Owner</th></tr></thead>
+          <tbody>
+          {% for r in items %}
+            <tr>
+              <td class="ps-4"><a href="{{ url_for('record_detail', record_id=r.id) }}" class="fw-semibold">{{ r.title }}</a></td>
+              <td>{{ r.period_label }}</td>
+              <td class="small text-nowrap">{{ r.due_date or '—' }}<br><span class="text-muted">{{ r.state_label }}</span></td>
+              <td><span class="badge bg-light text-dark border">{{ statuses[r.status] }}</span></td>
+              <td class="small">{{ r.owner_name or '—' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">No records match.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-plus-circle me-2 text-teal" aria-hidden="true"></i>Open a reporting period</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('compliance_new') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <div class="mb-2"><label for="nm" class="form-label small fw-semibold">Module</label>
+            <select id="nm" name="module" class="form-select form-select-sm" required>
+              {% for k, m in modules.items() if k != 'gbs' %}<option value="{{ k }}" {{ 'selected' if f_module == k }}>{{ m.title }}</option>{% endfor %}
+            </select></div>
+          <div class="mb-2"><label for="ny" class="form-label small fw-semibold">Year</label>
+            <input id="ny" type="number" name="period_year" class="form-control form-control-sm" value="{{ current_year }}" min="2000" max="2100" required aria-describedby="nyh">
+            <small id="nyh" class="text-muted">Label, period dates and due date are suggested from the year (EE: Oct–Sep ending in that year). Override below if needed.</small></div>
+          <details class="mb-2"><summary class="small">Override suggested values</summary>
+            <div class="mt-2"><label for="nl" class="form-label small">Period label</label><input id="nl" name="period_label" class="form-control form-control-sm" maxlength="40"></div>
+            <div class="row g-2 mt-1"><div class="col"><label for="nps" class="form-label small">Start</label><input id="nps" type="date" name="period_start" class="form-control form-control-sm"></div>
+            <div class="col"><label for="npe" class="form-label small">End</label><input id="npe" type="date" name="period_end" class="form-control form-control-sm"></div></div>
+            <div class="mt-1"><label for="nd" class="form-label small">Due date</label><input id="nd" type="date" name="due_date" class="form-control form-control-sm"></div>
+          </details>
+          <div class="mb-2"><label for="no" class="form-label small fw-semibold">Owner</label>
+            <select id="no" name="owner_id" class="form-select form-select-sm"><option value="">—</option>{% for u in users %}<option value="{{ u.id }}">{{ u.full_name or u.username }}</option>{% endfor %}</select></div>
+          <div class="mb-3"><label for="nr" class="form-label small fw-semibold">Reviewer</label>
+            <select id="nr" name="reviewer_id" class="form-select form-select-sm"><option value="">—</option>{% for u in users %}<option value="{{ u.id }}">{{ u.full_name or u.username }}</option>{% endfor %}</select></div>
+          <button class="btn btn-teal btn-sm w-100">Open period</button>
+          <p class="small text-muted mt-2 mb-0">GBS claims are opened from the <a href="{{ url_for('gbs') }}">GBS page</a>. Only one record per module and period is allowed.</p>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

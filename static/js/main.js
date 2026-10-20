@@ -1,3 +1,6 @@
+// CSRF token for fetch() calls; forms carry it as a hidden field.
+var CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+
 /* ═══════════════════════════════════════════════════════════════
    HR Audit — South African HR Compliance Suite
    Main JavaScript
@@ -183,7 +186,7 @@ function initChecklist() {
 
     fetch('/checklist/toggle', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
       body: JSON.stringify({ module: module, item_key: itemKey, checked: checked }),
     })
       .then(r => r.json())
@@ -236,7 +239,7 @@ function initChecklist() {
 
     fetch('/checklist/task/add', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
       body: JSON.stringify({ module: module, step_key: stepKey, text: text }),
     })
       .then(r => r.json())
@@ -259,7 +262,7 @@ function initChecklist() {
     if (!confirm('Delete this custom task?')) return;
     fetch('/checklist/task/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
       body: JSON.stringify({ module: module, task_id: taskId }),
     })
       .then(r => r.json())
@@ -278,7 +281,7 @@ function initChecklist() {
     if (!confirm('Remove this default task from this project?\n\nYou can restore it later from the checklist header.')) return;
     fetch('/checklist/task/hide', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
       body: JSON.stringify({ module: module, item_key: itemKey }),
     })
       .then(r => r.json())

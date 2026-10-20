@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_checklist.html" import render_checklist %}
+{% from "_checklist.html" import render_checklist with context %}
 {% block title %}GBS Incentive Claim{% endblock %}
 {% block page_title %}GBS — Global Business Services Incentive Claim (the dtic){% endblock %}
 
@@ -38,7 +38,7 @@
             <i class="bi bi-clipboard-data me-2 text-teal"></i>GBS Claim Particulars
           </div>
           <div class="card-body">
-            <form method="POST" action="{{ url_for('gbs') }}">
+            <form method="POST" action="{{ url_for('gbs') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
               <div class="row g-3">
                 <div class="col-md-6">
                   <label class="form-label fw-semibold small">Company / Entity Name</label>

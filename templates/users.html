@@ -37,7 +37,9 @@
                     </div>
                     <div>
                       <div class="fw-semibold">{{ u.full_name or u.username }}</div>
-                      <small class="text-muted">@{{ u.username }}</small>
+                      <small class="text-muted">@{{ u.username }}{% if u.email %} · {{ u.email }}{% endif %}</small>
+                      {% if not u.active %}<span class="badge bg-secondary ms-1">Disabled</span>{% endif %}
+                      {% if u.locked_until and u.locked_until > now().isoformat() %}<span class="badge bg-danger ms-1">Locked</span>{% endif %}
                     </div>
                   </div>
                 </td>
@@ -57,16 +59,22 @@
                             data-bs-toggle="modal" data-bs-target="#resetModal{{ u.id }}" title="Reset password">
                       <i class="bi bi-key"></i>
                     </button>
+                    {% if u.username != current_user %}
                     <form method="POST" action="{{ url_for('users_toggle_role', user_id=u.id) }}" class="d-inline"
-                          onsubmit="return confirm('Change {{ u.username }}\'s role?');">
-                      <button type="submit" class="btn btn-outline-secondary" title="Toggle admin/user">
+                          onsubmit="return confirm({{ ("Change " ~ u.username ~ "'s role?")|tojson|forceescape }});"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-outline-secondary" title="Toggle admin/user" aria-label="Toggle role of {{ u.username }}">
                         <i class="bi bi-arrow-left-right"></i>
                       </button>
                     </form>
-                    {% if u.username != current_user %}
+                    <form method="POST" action="{{ url_for('users_toggle_active', user_id=u.id) }}" class="d-inline"
+                          onsubmit="return confirm({{ (('Enable ' if not u.active else 'Disable ') ~ u.username ~ '?')|tojson|forceescape }});"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-outline-secondary" title="{{ 'Enable' if not u.active else 'Disable' }} account" aria-label="{{ 'Enable' if not u.active else 'Disable' }} {{ u.username }}">
+                        <i class="bi {{ 'bi-person-check' if not u.active else 'bi-person-slash' }}"></i>
+                      </button>
+                    </form>
                     <form method="POST" action="{{ url_for('users_delete', user_id=u.id) }}" class="d-inline"
-                          onsubmit="return confirm('Delete user {{ u.username }}?');">
-                      <button type="submit" class="btn btn-outline-danger" title="Delete user">
+                          onsubmit="return confirm({{ ('Permanently delete user ' ~ u.username ~ '? Prefer Disable — it keeps their history.')|tojson|forceescape }});"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-outline-danger" title="Delete user" aria-label="Delete {{ u.username }}">
                         <i class="bi bi-trash"></i>
                       </button>
                     </form>
@@ -76,15 +84,16 @@
                   <!-- Reset password modal -->
                   <div class="modal fade" id="resetModal{{ u.id }}" tabindex="-1">
                     <div class="modal-dialog modal-dialog-centered">
-                      <form method="POST" action="{{ url_for('users_reset', user_id=u.id) }}" class="modal-content border-0 shadow">
+                      <form method="POST" action="{{ url_for('users_reset', user_id=u.id) }}" class="modal-content border-0 shadow"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                         <div class="modal-header" style="background:var(--cb-navy);color:#fff;">
                           <h6 class="modal-title">Reset password — {{ u.username }}</h6>
                           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body text-start">
                           <label class="form-label fw-semibold small">New password</label>
-                          <input type="text" name="password" class="form-control" required
-                                 placeholder="Enter a new password">
+                          <input type="password" name="password" class="form-control" required minlength="12"
+                                 autocomplete="new-password" placeholder="At least 12 characters">
+                          <small class="text-muted">The user must change it at next sign-in, and is signed out everywhere now.</small>
                         </div>
                         <div class="modal-footer">
                           <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -110,7 +119,7 @@
         <i class="bi bi-person-plus-fill me-2 text-teal"></i>Add New User
       </div>
       <div class="card-body">
-        <form method="POST" action="{{ url_for('users_add') }}">
+        <form method="POST" action="{{ url_for('users_add') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <div class="mb-2">
             <label class="form-label fw-semibold small">Username</label>
             <input type="text" name="username" class="form-control form-control-sm" required>
@@ -120,8 +129,13 @@
             <input type="text" name="full_name" class="form-control form-control-sm">
           </div>
           <div class="mb-2">
-            <label class="form-label fw-semibold small">Password</label>
-            <input type="text" name="password" class="form-control form-control-sm" required>
+            <label class="form-label fw-semibold small">Email</label>
+            <input type="email" name="email" class="form-control form-control-sm">
+          </div>
+          <div class="mb-2">
+            <label class="form-label fw-semibold small">Temporary password</label>
+            <input type="password" name="password" class="form-control form-control-sm" required minlength="12" autocomplete="new-password">
+            <small class="text-muted">At least 12 characters. The user changes it at first sign-in.</small>
           </div>
           <div class="mb-3">
             <label class="form-label fw-semibold small">Role</label>

@@ -1,274 +1,150 @@
-"""WSP / ATR report generation."""
+"""WSP / ATR: training records belonging to one reporting period, rendered from a
+snapshot. Employee names and numbers are copied into the training record when it
+is captured, so a later termination or rename does not change history."""
 import io
-from datetime import datetime
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
+from decimal import Decimal
+
+from modules.xlsx_common import (data_row, header_row, new_workbook, report_meta, save, title_block,
+                                 warning_row, widths)
+from modules.coida import money
 
 try:
     from docx import Document
-    from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.enum.table import WD_TABLE_ALIGNMENT
     DOCX_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover
     DOCX_AVAILABLE = False
 
-NAVY = "1A2744"
-LIGHT_BLUE = "D9E8F5"
-HEADER_BLUE = "2D9CDB"
-WHITE = "FFFFFF"
-GREY = "F2F2F2"
+COLS = ["employee_number", "employee_name", "intervention_type", "category", "nqf_level", "cost",
+        "provider", "target_date", "actual_date", "certificate", "status", "skills_gap"]
 
 
-def _thin_border():
-    thin = Side(style="thin")
-    return Border(left=thin, right=thin, top=thin, bottom=thin)
+def build_snapshot(db, record, company, rule_set=None):
+    rows = [dict(r) for r in db.execute(
+        "SELECT id, %s FROM training_records WHERE record_id=? ORDER BY id" % ", ".join(COLS), (record["id"],))]
+    return {
+        "kind": "wsp",
+        "period": {"label": record["period_label"], "start": record["period_start"], "end": record["period_end"]},
+        "company": company,
+        "rules": None,
+        "training": rows,
+    }
 
 
-def _hfill(hex_color):
-    return PatternFill("solid", fgColor=hex_color)
+def _split(snapshot):
+    planned = [t for t in snapshot["training"] if t["status"] in ("Planned", "In Progress")]
+    done = [t for t in snapshot["training"] if t["status"] == "Completed"]
+    return planned, done
 
 
-def _header_row(ws, row, headers, fill_hex=HEADER_BLUE, font_color=WHITE):
-    border = _thin_border()
-    for col, h in enumerate(headers, 1):
-        c = ws.cell(row=row, column=col, value=h)
-        c.font = Font(bold=True, color=font_color)
-        c.fill = _hfill(fill_hex)
-        c.alignment = Alignment(horizontal="center", wrap_text=True)
-        c.border = border
-    ws.row_dimensions[row].height = 28
+def checks(snapshot):
+    planned, done = _split(snapshot)
+    out = []
+    other = [t for t in snapshot["training"] if t not in planned and t not in done]
+    out.append({"check": "Every record is Planned, In Progress or Completed", "expected": "0 other",
+                "actual": "%d other" % len(other), "ok": not other, "detail": ""})
+    no_date = [t for t in done if not t["actual_date"]]
+    out.append({"check": "Completed training has an actual date", "expected": "0 missing",
+                "actual": "%d missing" % len(no_date), "ok": not no_date,
+                "detail": ", ".join(t["employee_number"] or "?" for t in no_date[:20])})
+    neg = [t for t in snapshot["training"] if (t["cost"] or 0) < 0]
+    out.append({"check": "No negative costs", "expected": "0", "actual": str(len(neg)), "ok": not neg, "detail": ""})
+    total = sum((money(t["cost"]) for t in snapshot["training"]), Decimal("0.00"))
+    split = sum((money(t["cost"]) for t in planned + done), Decimal("0.00"))
+    out.append({"check": "WSP cost + ATR cost = total cost", "expected": str(total), "actual": str(split),
+                "ok": total == split, "detail": ""})
+    return out
 
 
-def generate_wsp(db, company_info: dict) -> bytes:
-    """Generate WSP (Workplace Skills Plan) Excel report."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "WSP"
-
-    col_widths = [6, 20, 20, 22, 10, 12, 16, 18, 12]
-    for i, w in enumerate(col_widths, 1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-
-    ws.merge_cells("A1:I1")
-    ws["A1"] = "WORKPLACE SKILLS PLAN (WSP)"
-    ws["A1"].font = Font(bold=True, size=14, color=WHITE)
-    ws["A1"].fill = _hfill(NAVY)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 32
-
-    info_pairs = [
-        ("Company:", company_info.get("company_name", "")),
-        ("SETA:", company_info.get("seta", "")),
-        ("SDL Number:", company_info.get("sdl_number", "")),
-        ("Skills Levy (R):", company_info.get("skills_levy", "")),
-        ("Report Date:", datetime.now().strftime("%d %B %Y")),
-    ]
-    for i, (label, value) in enumerate(info_pairs, 2):
-        ws[f"A{i}"] = label
-        ws[f"B{i}"] = value
-        ws[f"A{i}"].font = Font(bold=True)
-        ws[f"A{i}"].fill = _hfill(LIGHT_BLUE)
-
-    headers = [
-        "#", "Employee Name", "Employee Number", "Intervention / Programme",
-        "NQF Level", "Cost (R)", "Provider", "Target Date", "Status"
-    ]
-    _header_row(ws, 8, headers)
-
-    records = db.execute(
-        "SELECT * FROM training_records WHERE status='Planned' ORDER BY target_date"
-    ).fetchall()
-
-    border = _thin_border()
-    for i, rec in enumerate(records, 1):
-        row = 8 + i
-        fill = _hfill(GREY) if i % 2 == 0 else PatternFill()
-        values = [
-            i,
-            rec["employee_name"],
-            rec["employee_id"],
-            rec["intervention_type"],
-            rec["nqf_level"],
-            rec["cost"],
-            rec["provider"],
-            rec["target_date"],
-            rec["status"],
-        ]
-        for col, val in enumerate(values, 1):
-            c = ws.cell(row=row, column=col, value=val)
-            c.border = border
-            c.fill = fill
-            if col == 6 and val:
-                c.number_format = "#,##0.00"
-                c.alignment = Alignment(horizontal="right")
-
-    # Total row
-    total_row = 9 + len(records)
-    ws.cell(row=total_row, column=1, value="TOTAL").font = Font(bold=True, color=WHITE)
-    ws.cell(row=total_row, column=1).fill = _hfill(NAVY)
-    if records:
-        ws.cell(row=total_row, column=6,
-                value=f"=SUM(F9:F{total_row-1})").font = Font(bold=True, color=WHITE)
-        ws.cell(row=total_row, column=6).fill = _hfill(NAVY)
-        ws.cell(row=total_row, column=6).number_format = "#,##0.00"
-
-    out = io.BytesIO()
-    wb.save(out)
-    return out.getvalue()
+def _meta(snapshot, ctx):
+    c = snapshot["company"]
+    return [("Company:", c.get("company_name") or ""), ("SETA:", c.get("seta") or ""),
+            ("SDL number:", c.get("sdl_number") or ""),
+            ("Reporting period:", snapshot["period"]["label"])] + report_meta(ctx)
 
 
-def generate_atr(db, company_info: dict) -> bytes:
-    """Generate ATR (Annual Training Report) Excel report."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "ATR"
-
-    col_widths = [6, 20, 20, 22, 10, 12, 16, 14, 14, 16]
-    for i, w in enumerate(col_widths, 1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-
-    ws.merge_cells("A1:J1")
-    ws["A1"] = "ANNUAL TRAINING REPORT (ATR)"
-    ws["A1"].font = Font(bold=True, size=14, color=WHITE)
-    ws["A1"].fill = _hfill(NAVY)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 32
-
-    info_pairs = [
-        ("Company:", company_info.get("company_name", "")),
-        ("SETA:", company_info.get("seta", "")),
-        ("SDL Number:", company_info.get("sdl_number", "")),
-        ("Report Date:", datetime.now().strftime("%d %B %Y")),
-    ]
-    for i, (label, value) in enumerate(info_pairs, 2):
-        ws[f"A{i}"] = label
-        ws[f"B{i}"] = value
-        ws[f"A{i}"].font = Font(bold=True)
-        ws[f"A{i}"].fill = _hfill(LIGHT_BLUE)
-
-    headers = [
-        "#", "Employee Name", "Employee Number", "Intervention / Programme",
-        "NQF Level", "Cost (R)", "Provider", "Target Date", "Actual Date", "Certificate"
-    ]
-    _header_row(ws, 7, headers)
-
-    records = db.execute(
-        "SELECT * FROM training_records WHERE status='Completed' ORDER BY actual_date DESC"
-    ).fetchall()
-
-    border = _thin_border()
-    for i, rec in enumerate(records, 1):
-        row = 7 + i
-        fill = _hfill(GREY) if i % 2 == 0 else PatternFill()
-        values = [
-            i, rec["employee_name"], rec["employee_id"],
-            rec["intervention_type"], rec["nqf_level"], rec["cost"],
-            rec["provider"], rec["target_date"], rec["actual_date"], rec["certificate"]
-        ]
-        for col, val in enumerate(values, 1):
-            c = ws.cell(row=row, column=col, value=val)
-            c.border = border
-            c.fill = fill
-            if col == 6 and val:
-                c.number_format = "#,##0.00"
-                c.alignment = Alignment(horizontal="right")
-
-    out = io.BytesIO()
-    wb.save(out)
-    return out.getvalue()
+def _table(ws, row, rows, completed):
+    hdr = ["#", "Employee no.", "Employee", "Intervention", "Category", "NQF", "Cost (R)", "Provider",
+           "Target date"] + (["Actual date", "Certificate"] if completed else ["Status"])
+    row = header_row(ws, row, hdr)
+    total = Decimal("0.00")
+    for i, t in enumerate(rows, 1):
+        vals = [i, t["employee_number"] or "", t["employee_name"] or "", t["intervention_type"] or "",
+                t["category"] or "", t["nqf_level"] or "", float(money(t["cost"])), t["provider"] or "",
+                t["target_date"] or ""] + ([t["actual_date"] or "", t["certificate"] or ""] if completed
+                                           else [t["status"]])
+        total += money(t["cost"])
+        row = data_row(ws, row, vals, money_cols=(7,), shade=i % 2 == 0)
+    tot = ["TOTAL", "", "", "", "", "", float(total)] + [""] * (len(hdr) - 7)
+    return data_row(ws, row, tot, money_cols=(7,), total=True)
 
 
-def generate_wsp_word(db, company_info: dict) -> bytes:
-    """Generate WSP Word document."""
+def generate_wsp(snapshot, ctx):
+    planned, _ = _split(snapshot)
+    wb, ws = new_workbook("WSP")
+    widths(ws, [6, 14, 24, 28, 14, 8, 14, 20, 12, 12])
+    row = title_block(ws, "WORKPLACE SKILLS PLAN (WSP) — WORKING COPY", "Planned training interventions", 10,
+                      _meta(snapshot, ctx))
+    _table(ws, row, planned, completed=False)
+    return save(wb, ctx.get("generated_dt"))
+
+
+def generate_atr(snapshot, ctx):
+    _, done = _split(snapshot)
+    wb, ws = new_workbook("ATR")
+    widths(ws, [6, 14, 24, 28, 14, 8, 14, 20, 12, 12, 14])
+    row = title_block(ws, "ANNUAL TRAINING REPORT (ATR) — WORKING COPY", "Completed training", 11,
+                      _meta(snapshot, ctx))
+    _table(ws, row, done, completed=True)
+    return save(wb, ctx.get("generated_dt"))
+
+
+def generate_wsp_word(snapshot, ctx):
     if not DOCX_AVAILABLE:
         raise RuntimeError("python-docx not installed.")
-
+    planned, done = _split(snapshot)
+    c = snapshot["company"]
     doc = Document()
-
-    # Title
-    title = doc.add_heading("WORKPLACE SKILLS PLAN (WSP)", level=0)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # Company info
-    doc.add_heading("Company Information", level=1)
-    info_table = doc.add_table(rows=5, cols=2)
-    info_table.style = "Table Grid"
-    info_data = [
-        ("Company Name", company_info.get("company_name", "")),
-        ("SETA", company_info.get("seta", "")),
-        ("SDL Number", company_info.get("sdl_number", "")),
-        ("Skills Levy", f"R {company_info.get('skills_levy', 0):,.2f}"),
-        ("Report Date", datetime.now().strftime("%d %B %Y")),
-    ]
-    for i, (label, value) in enumerate(info_data):
-        info_table.rows[i].cells[0].text = label
-        info_table.rows[i].cells[1].text = str(value)
-        info_table.rows[i].cells[0].paragraphs[0].runs[0].bold = True
-
-    doc.add_paragraph()
-
-    # Planned training
-    doc.add_heading("Planned Training Interventions (WSP)", level=1)
-    records = db.execute(
-        "SELECT * FROM training_records WHERE status='Planned' ORDER BY target_date"
-    ).fetchall()
-
-    if records:
-        headers = ["Employee", "Programme", "NQF", "Cost (R)", "Provider", "Target Date"]
-        tbl = doc.add_table(rows=1 + len(records), cols=len(headers))
+    doc.add_heading("WORKPLACE SKILLS PLAN & ANNUAL TRAINING REPORT", level=0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_heading("Company information", level=1)
+    levy = c.get("skills_levy")
+    try:
+        levy_txt = "R {:,.2f}".format(float(levy)) if levy not in (None, "") else ""
+    except (TypeError, ValueError):
+        levy_txt = str(levy)
+    info = [("Company name", c.get("company_name") or ""), ("SETA", c.get("seta") or ""),
+            ("SDL number", c.get("sdl_number") or ""), ("Skills levy", levy_txt),
+            ("Reporting period", snapshot["period"]["label"])] + \
+           [(k.rstrip(":"), str(v)) for k, v in report_meta(ctx)]
+    t = doc.add_table(rows=len(info), cols=2)
+    t.style = "Table Grid"
+    for i, (k, v) in enumerate(info):
+        t.rows[i].cells[0].text = k
+        t.rows[i].cells[1].text = v
+        t.rows[i].cells[0].paragraphs[0].runs[0].bold = True
+    for heading, rows, completed in (("Planned training (WSP)", planned, False),
+                                     ("Completed training (ATR)", done, True)):
+        doc.add_heading(heading, level=1)
+        if not rows:
+            doc.add_paragraph("No records.")
+            continue
+        hdr = ["Employee no.", "Employee", "Programme", "NQF", "Cost (R)", "Provider",
+               "Actual date" if completed else "Target date"]
+        tbl = doc.add_table(rows=1 + len(rows), cols=len(hdr))
         tbl.style = "Table Grid"
-        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        for col, h in enumerate(headers):
-            cell = tbl.rows[0].cells[col]
-            cell.text = h
-            cell.paragraphs[0].runs[0].bold = True
-        for i, rec in enumerate(records, 1):
-            row = tbl.rows[i]
-            row.cells[0].text = rec["employee_name"] or ""
-            row.cells[1].text = rec["intervention_type"] or ""
-            row.cells[2].text = rec["nqf_level"] or ""
-            row.cells[3].text = f"{rec['cost']:,.2f}" if rec["cost"] else ""
-            row.cells[4].text = rec["provider"] or ""
-            row.cells[5].text = rec["target_date"] or ""
-    else:
-        doc.add_paragraph("No planned training records found.")
-
-    doc.add_paragraph()
-
-    # Completed training
-    doc.add_heading("Completed Training (ATR)", level=1)
-    completed = db.execute(
-        "SELECT * FROM training_records WHERE status='Completed' ORDER BY actual_date DESC"
-    ).fetchall()
-
-    if completed:
-        headers2 = ["Employee", "Programme", "NQF", "Cost (R)", "Provider", "Actual Date", "Certificate"]
-        tbl2 = doc.add_table(rows=1 + len(completed), cols=len(headers2))
-        tbl2.style = "Table Grid"
-        for col, h in enumerate(headers2):
-            cell = tbl2.rows[0].cells[col]
-            cell.text = h
-            cell.paragraphs[0].runs[0].bold = True
-        for i, rec in enumerate(completed, 1):
-            row = tbl2.rows[i]
-            row.cells[0].text = rec["employee_name"] or ""
-            row.cells[1].text = rec["intervention_type"] or ""
-            row.cells[2].text = rec["nqf_level"] or ""
-            row.cells[3].text = f"{rec['cost']:,.2f}" if rec["cost"] else ""
-            row.cells[4].text = rec["provider"] or ""
-            row.cells[5].text = rec["actual_date"] or ""
-            row.cells[6].text = rec["certificate"] or ""
-    else:
-        doc.add_paragraph("No completed training records found.")
-
-    doc.add_paragraph()
-    footer_para = doc.add_paragraph(
-        f"Generated by HR Audit System — {datetime.now().strftime('%d %B %Y %H:%M')}"
-    )
-    footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
+        for j, h in enumerate(hdr):
+            tbl.rows[0].cells[j].text = h
+            tbl.rows[0].cells[j].paragraphs[0].runs[0].bold = True
+        for i, r in enumerate(rows, 1):
+            vals = [r["employee_number"] or "", r["employee_name"] or "", r["intervention_type"] or "",
+                    r["nqf_level"] or "", "{:,.2f}".format(float(money(r["cost"]))), r["provider"] or "",
+                    (r["actual_date"] if completed else r["target_date"]) or ""]
+            for j, v in enumerate(vals):
+                tbl.rows[i].cells[j].text = v
+    doc.core_properties.author = "AnotherBPO HR Compliance Suite"
+    if ctx.get("generated_dt") is not None:
+        doc.core_properties.created = ctx["generated_dt"]
+        doc.core_properties.modified = ctx["generated_dt"]
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()

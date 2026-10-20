@@ -340,6 +340,76 @@ CHECKLISTS = {
 }
 
 
+def _simple(title, subtitle, steps, note=None):
+    """Compact definition helper for the generic module checklists below."""
+    return {
+        "title": title, "subtitle": subtitle, "intro": note or "", "deadline": "",
+        "steps": [
+            {"key": key, "title": t, "owner": owner,
+             "items": [{"key": "%s%s" % (key, chr(97 + i)), "text": x} for i, x in enumerate(items)],
+             "references": refs}
+            for key, t, owner, items, refs in steps
+        ],
+        "reminders": [], "general_references": [],
+    }
+
+
+CHECKLISTS["wsp"] = _simple(
+    "WSP / ATR Submission Checklist", "Workplace Skills Plan and Annual Training Report to your SETA",
+    [
+        ("w1", "Step 1 — Prepare", "Skills Development Facilitator",
+         ["Confirm the SETA submission window for this period", "Confirm the SDF registration with the SETA",
+          "Confirm SDL number and levy figures on the company profile"], []),
+        ("w2", "Step 2 — Capture training", "HR",
+         ["Capture all completed training for the period (ATR)", "Capture planned training (WSP)",
+          "Attach attendance registers / certificates as evidence"], []),
+        ("w3", "Step 3 — Consult and sign off", "Training committee",
+         ["Consult the training committee / employee representatives", "Obtain the required sign-offs"], []),
+        ("w4", "Step 4 — Submit", "Skills Development Facilitator",
+         ["Submit on the SETA system", "Record the submission reference and upload the acknowledgement"], []),
+    ])
+
+CHECKLISTS["coida"] = _simple(
+    "COIDA Return of Earnings Checklist", "W.As.8 Return of Earnings to the Compensation Fund",
+    [
+        ("c1", "Step 1 — Prepare", "Payroll",
+         ["Confirm the assessment period and the Compensation Fund's submission window",
+          "Confirm the maximum earnings figure for the year is captured (rules register)",
+          "Enter each class rate from the employer's assessment notice"], []),
+        ("c2", "Step 2 — Earnings", "Payroll",
+         ["Build employee earnings from the register", "Reconcile total earnings to the payroll / IRP5 totals",
+          "Correct classes for employees in more than one class"], []),
+        ("c3", "Step 3 — Submit and pay", "Finance",
+         ["Submit the Return of Earnings online", "Record the submission reference",
+          "Pay the assessment and upload proof of payment", "Request / upload the Letter of Good Standing"], []),
+    ])
+
+CHECKLISTS["bbbee"] = _simple(
+    "B-BBEE Measurement Checklist", "Internal calculation ahead of verification or affidavit",
+    [
+        ("b1", "Step 1 — Classify", "Finance",
+         ["Confirm annual turnover and scorecard type (EME / QSE / Generic)",
+          "Confirm whether a sector code applies"], []),
+        ("b2", "Step 2 — Gather evidence", "Compliance",
+         ["Ownership documents", "Management control records", "Skills development spend",
+          "Procurement and ESD spend", "SED contributions"], []),
+        ("b3", "Step 3 — Verify", "Compliance",
+         ["Engage a SANAS-accredited agency or prepare a sworn affidavit (if eligible)",
+          "Upload the certificate / affidavit as evidence and record its expiry date"], []),
+    ])
+
+CHECKLISTS["cipc_bo"] = _simple(
+    "CIPC Beneficial Ownership Checklist", "Keep the beneficial ownership register current with CIPC",
+    [
+        ("o1", "Step 1 — Register", "Company Secretary",
+         ["Update the internal beneficial ownership register",
+          "Confirm all beneficial owners and their interests"], []),
+        ("o2", "Step 2 — File", "Company Secretary",
+         ["File the beneficial ownership declaration with CIPC",
+          "Record the filing reference and upload the confirmation"], []),
+    ])
+
+
 def get_checklist(module):
     """Return the checklist definition for a module, or None."""
     return CHECKLISTS.get(module)

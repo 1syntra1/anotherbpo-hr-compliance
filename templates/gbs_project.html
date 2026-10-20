@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_checklist.html" import render_checklist %}
+{% from "_checklist.html" import render_checklist with context %}
 {% block title %}{{ project.quarter }} {{ project.year }} — GBS Claim{% endblock %}
 {% block page_title %}GBS — {{ project.quarter }} {{ project.year }} Claim Project{% endblock %}
 
@@ -41,34 +41,28 @@
       </div>
 
       <!-- Action buttons -->
-      <div class="d-flex gap-2 flex-wrap">
-        {% if project.status == 'Submitted' %}
-          <form method="POST" action="{{ url_for('gbs_project_reopen', project_id=project.id) }}" class="d-inline">
-            <button type="submit" class="btn btn-outline-secondary btn-sm">
-              <i class="bi bi-arrow-counterclockwise me-1"></i>Reopen
-            </button>
-          </form>
-        {% else %}
-          <form method="POST" action="{{ url_for('gbs_project_submit', project_id=project.id) }}" class="d-inline"
-                onsubmit="return confirm('Submit and close this project? It will be marked Submitted and become read-only. You can reopen it later if needed.');">
-            <button type="submit" class="btn btn-lime btn-sm fw-semibold px-3">
-              <i class="bi bi-check-circle me-1"></i>Submit Project
-            </button>
-          </form>
+      <div class="d-flex gap-2 flex-wrap align-items-center">
+        {% if record %}
+        <span class="badge bg-light text-dark border">Workflow: {{ status_labels[record.status] }}</span>
+        <a href="{{ url_for('record_detail', record_id=record.id) }}" class="btn btn-teal btn-sm">
+          <i class="bi bi-folder-check me-1" aria-hidden="true"></i>Review, approval, submission &amp; evidence
+        </a>
         {% endif %}
+        {% if record and record.status in ('DRAFT', 'PREPARED', 'REQUIRES_CHANGES') %}
         <form method="POST" action="{{ url_for('gbs_project_delete', project_id=project.id) }}" class="d-inline"
-              onsubmit="return confirm('Permanently delete this project, its checklist progress, and custom tasks? This cannot be undone.');">
-          <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete project">
-            <i class="bi bi-trash"></i>
+              onsubmit="return confirm('Move this claim to the trash bin? An administrator can restore it.');"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-outline-danger btn-sm" title="Move to trash" aria-label="Move to trash">
+            <i class="bi bi-trash" aria-hidden="true"></i>
           </button>
         </form>
+        {% endif %}
       </div>
     </div>
 
     {% if readonly %}
     <div class="alert alert-success d-flex align-items-center gap-2 mt-3 mb-0 py-2">
       <i class="bi bi-check-circle-fill"></i>
-      <small class="fw-semibold">This project has been submitted and is read-only. Click <em>Reopen</em> to make changes.</small>
+      <small class="fw-semibold">This claim is {{ status_labels[record.status]|lower if record else 'locked' }} and read-only. Changes require it to be sent back through the workflow on its compliance record.</small>
     </div>
     {% endif %}
   </div>
@@ -95,7 +89,7 @@
 
   <!-- ═══ TAB 1: Submission Checklist ═══ -->
   <div class="tab-pane fade show active" id="tab-checklist" role="tabpanel">
-    {{ render_checklist(scope, checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks, hidden_tasks) }}
+    {% if checklist %}{{ render_checklist(scope, checklist, checklist_states, cl_done, cl_total, cl_pct, custom_tasks, hidden_tasks, cl_locked) }}{% endif %}
   </div>
 
   <!-- ═══ TAB 2: Claim Details ═══ -->
@@ -107,7 +101,7 @@
             <i class="bi bi-clipboard-data me-2 text-teal"></i>GBS Claim Particulars
           </div>
           <div class="card-body">
-            <form method="POST" action="{{ url_for('gbs_project', project_id=project.id) }}">
+            <form method="POST" action="{{ url_for('gbs_project', project_id=project.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
               <fieldset {% if readonly %}disabled{% endif %}>
               <div class="row g-3">
                 <div class="col-md-12">

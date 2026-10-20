@@ -4,48 +4,111 @@
 
 {% block content %}
 
-<!-- ═══ Submission Deadlines (top of dashboard) ═══ -->
+{% macro status_badge(r) -%}
+  {%- set cls = {'overdue':'compliance-badge-red','due_soon':'compliance-badge-amber','upcoming':'compliance-badge-teal','done':'compliance-badge-green'}.get(r.state, 'bg-light text-secondary border') -%}
+  {%- set icon = {'overdue':'bi-exclamation-octagon-fill','due_soon':'bi-hourglass-split','upcoming':'bi-calendar3','done':'bi-check-circle-fill'}.get(r.state, 'bi-dash-circle') -%}
+  <span class="badge {{ cls }}"><i class="bi {{ icon }} me-1" aria-hidden="true"></i>{{ r.state_label }}</span>
+{%- endmacro %}
+
+<!-- ═══ Compliance health + notifications ═══ -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="small text-muted fw-semibold text-uppercase mb-1">Compliance health</div>
+        <div class="d-flex align-items-end gap-2 mb-2">
+          <div class="display-5 fw-bold text-navy lh-1">{{ health.pct }}%</div>
+          <small class="text-muted mb-1">of due obligations completed</small>
+        </div>
+        <div class="progress mb-3" style="height:10px;" role="progressbar" aria-label="Compliance health"
+             aria-valuenow="{{ health.pct }}" aria-valuemin="0" aria-valuemax="100">
+          <div class="progress-bar" style="width:{{ health.pct }}%;background:var(--cb-teal-dark);"></div>
+        </div>
+        <ul class="list-unstyled small mb-0">
+          <li><i class="bi bi-check-circle-fill text-success me-1" aria-hidden="true"></i>Completed / submitted: <strong>{{ health.done }}</strong></li>
+          <li><i class="bi bi-hourglass-split text-warning me-1" aria-hidden="true"></i>Due within 30 days: <strong>{{ health.due_soon }}</strong></li>
+          <li><i class="bi bi-exclamation-octagon-fill text-danger me-1" aria-hidden="true"></i>Overdue: <strong>{{ health.overdue }}</strong></li>
+          <li><i class="bi bi-calendar3 text-secondary me-1" aria-hidden="true"></i>Upcoming: <strong>{{ health.upcoming }}</strong>{% if health.nodate %} · no due date: <strong>{{ health.nodate }}</strong>{% endif %}</li>
+        </ul>
+        {% if unverified_rules %}
+        <a href="{{ url_for('rules_register') }}" class="alert alert-warning d-block small py-2 mt-3 mb-0 text-decoration-none">
+          <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>{{ unverified_rules }} regulatory rule set{{ 's' if unverified_rules != 1 }} not yet verified
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white border-bottom fw-semibold py-3">
+        <i class="bi bi-bell me-2 text-teal" aria-hidden="true"></i>Needs attention
+      </div>
+      <div class="list-group list-group-flush">
+        {% for level, text, rid in notices %}
+        <a href="{{ url_for('record_detail', record_id=rid) }}" class="list-group-item list-group-item-action small d-flex gap-2 align-items-start">
+          <i class="bi {{ {'danger':'bi-exclamation-octagon-fill text-danger','warning':'bi-exclamation-triangle-fill text-warning','info':'bi-info-circle-fill text-primary'}[level] }} mt-1" aria-hidden="true"></i>
+          <span>{{ text }}</span>
+        </a>
+        {% else %}
+        <div class="list-group-item small text-muted"><i class="bi bi-check2-all me-1" aria-hidden="true"></i>Nothing needs your attention right now.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Module status ═══ -->
+<div class="row g-3 mb-4">
+  {% for key, title, r in module_status %}
+  <div class="col-6 col-md-4 col-xl-2">
+    <a href="{{ url_for('record_detail', record_id=r.id) if r else url_for('compliance_list', module=key) }}"
+       class="card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body py-3">
+        <div class="small fw-semibold text-navy mb-1">{{ title }}</div>
+        {% if r %}
+          <div class="small text-muted mb-1">{{ r.period_label }} · {{ r.status_label }}</div>
+          {{ status_badge(r) }}
+        {% else %}
+          <span class="badge bg-light text-secondary border">No open period</span>
+        {% endif %}
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ═══ Compliance calendar ═══ -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-header bg-white border-bottom d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
-    <span class="fw-semibold">
-      <i class="bi bi-calendar-event me-2 text-teal"></i>Submission Deadlines
-    </span>
-    <small class="text-muted"><i class="bi bi-pencil me-1"></i>Click the pencil to change a due date</small>
+    <span class="fw-semibold"><i class="bi bi-calendar-event me-2 text-teal" aria-hidden="true"></i>Compliance calendar</span>
+    <a href="{{ url_for('compliance_list') }}" class="btn btn-sm btn-outline-secondary">All records &amp; new period</a>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
+        <caption class="visually-hidden">Open compliance obligations ordered by urgency</caption>
         <thead class="table-light">
           <tr>
-            <th class="ps-4">Submission</th>
-            <th>Submitted To</th>
-            <th>Due Date</th>
-            <th>Status</th>
-            <th class="pe-4 text-end">Edit</th>
+            <th class="ps-4" scope="col">Obligation</th>
+            <th scope="col">Period</th>
+            <th scope="col">Due</th>
+            <th scope="col">Workflow</th>
+            <th scope="col">Owner / reviewer</th>
+            <th scope="col" class="pe-4">Status</th>
           </tr>
         </thead>
         <tbody>
-          {% for d in deadlines %}
+          {% for r in calendar %}
           <tr>
-            <td class="ps-4">
-              <strong>{{ d.title }}</strong>
-              {% if d.note and d.due_date %}<br><small class="text-muted">{{ d.note }}</small>{% endif %}
-            </td>
-            <td class="text-muted">{{ d.authority }}</td>
-            <td class="fw-semibold text-navy">{{ d.due_display }}</td>
-            <td>
-              {% if d.status_class == 'red' %}<span class="badge compliance-badge-red">{{ d.status_label }}</span>
-              {% elif d.status_class == 'amber' %}<span class="badge compliance-badge-amber">{{ d.status_label }}</span>
-              {% elif d.status_class == 'teal' %}<span class="badge compliance-badge-teal">{{ d.status_label }}</span>
-              {% else %}<span class="badge bg-light text-secondary border">{{ d.status_label }}</span>{% endif %}
-            </td>
-            <td class="pe-4 text-end">
-              <button type="button" class="btn btn-sm btn-outline-secondary"
-                      data-bs-toggle="modal" data-bs-target="#dl{{ d.id }}" title="Change due date">
-                <i class="bi bi-pencil"></i>
-              </button>
-            </td>
+            <td class="ps-4"><a href="{{ url_for('record_detail', record_id=r.id) }}" class="fw-semibold">{{ r.title }}</a></td>
+            <td>{{ r.period_label }}</td>
+            <td class="text-nowrap">{{ r.due_date or '—' }}</td>
+            <td><span class="badge bg-light text-dark border">{{ r.status_label }}</span></td>
+            <td class="small">{{ r.owner_name or '—' }}<br><span class="text-muted">{{ r.reviewer_name or '—' }}</span></td>
+            <td class="pe-4">{{ status_badge(r) }}</td>
           </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No open compliance periods. <a href="{{ url_for('compliance_list') }}">Open one</a>.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -104,9 +167,9 @@
             </div>
             <div>
               <div class="fs-3 fw-bold lh-1">
-                {% if bbbee_row %}Level {{ bbbee_row.bbbee_level }}{% else %}—{% endif %}
+                {{ bbbee_level or '—' }}
               </div>
-              <small class="text-muted">BBBEE Level</small>
+              <small class="text-muted">B-BBEE (internal calc)</small>
             </div>
           </div>
         </div>
@@ -130,7 +193,6 @@
             <h5 class="card-title mb-1 fw-bold">Employment Equity</h5>
             <p class="text-muted small mb-0">EEA2 &amp; EEA4 Submissions to the DoEL</p>
           </div>
-          <span class="badge compliance-badge-amber">Due 15 Jan</span>
         </div>
         <p class="card-text text-secondary small">
           Track your employment equity workforce profile across all occupational levels.
@@ -161,7 +223,6 @@
             <h5 class="card-title mb-1 fw-bold">GBS Incentive Claim</h5>
             <p class="text-muted small mb-0">Global Business Services — the dtic</p>
           </div>
-          <span class="badge compliance-badge-teal">30-day window</span>
         </div>
         <p class="card-text text-secondary small">
           Manage your Global Business Services incentive claim to the dtic. Follow the
@@ -192,11 +253,10 @@
             <h5 class="card-title mb-1 fw-bold">WSP — Workplace Skills Plan</h5>
             <p class="text-muted small mb-0">Skills Plan &amp; Annual Training Report (ATR)</p>
           </div>
-          <span class="badge compliance-badge-green">Due 30 Jun</span>
         </div>
         <p class="card-text text-secondary small">
           Capture planned and completed training interventions. Submit your Workplace
-          Skills Plan and Annual Training Report to your SETA by 30 June each year
+          Skills Plan and Annual Training Report to your SETA within its submission window
           to qualify for mandatory grants.
         </p>
         <div class="d-flex gap-2 mt-3">
@@ -223,7 +283,6 @@
             <h5 class="card-title mb-1 fw-bold">BBBEE Scorecard</h5>
             <p class="text-muted small mb-0">Generic, QSE &amp; EME Scorecards</p>
           </div>
-          <span class="badge compliance-badge-amber">Varies</span>
         </div>
         <p class="card-text text-secondary small">
           Calculate your Broad-Based Black Economic Empowerment score across all
@@ -256,7 +315,6 @@
             <h5 class="card-title mb-1 fw-bold">COIDA — Return of Earnings</h5>
             <p class="text-muted small mb-0">W.As.8 &amp; Letter of Good Standing (LOGS)</p>
           </div>
-          <span class="badge compliance-badge-red">Due 31 Mar</span>
         </div>
         <p class="card-text text-secondary small">
           Manage your annual Return of Earnings (W.As.8) to the Compensation Fund.
@@ -309,31 +367,5 @@
     </div>
   </div>
 </div>
-
-<!-- Deadline edit modals -->
-{% for d in deadlines %}
-<div class="modal fade" id="dl{{ d.id }}" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <form method="POST" action="{{ url_for('deadline_update', deadline_id=d.id) }}" class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:var(--cb-navy);color:#fff;">
-        <h6 class="modal-title"><i class="bi bi-calendar-event me-2"></i>{{ d.title }}</h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body text-start">
-        <label class="form-label fw-semibold small">Due date</label>
-        <input type="date" name="due_date" class="form-control" value="{{ d.due_date or '' }}">
-        <small class="text-muted">Leave blank if the date varies / is event-driven.</small>
-        <label class="form-label fw-semibold small mt-3">Note (optional)</label>
-        <input type="text" name="note" class="form-control" value="{{ d.note or '' }}"
-               placeholder="e.g. Within 30 days of notification">
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button type="submit" class="btn btn-teal btn-sm">Save</button>
-      </div>
-    </form>
-  </div>
-</div>
-{% endfor %}
 
 {% endblock %}

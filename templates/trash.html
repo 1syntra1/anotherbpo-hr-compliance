@@ -62,13 +62,13 @@
           </div>
 
           <div class="d-flex gap-2">
-            <form method="POST" action="{{ url_for('trash_restore', project_id=p.id) }}" class="flex-grow-1">
+            <form method="POST" action="{{ url_for('trash_restore', project_id=p.id) }}" class="flex-grow-1"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-teal btn-sm w-100">
                 <i class="bi bi-arrow-counterclockwise me-1"></i>Restore
               </button>
             </form>
             <form method="POST" action="{{ url_for('trash_approve', project_id=p.id) }}" class="flex-grow-1"
-                  onsubmit="return confirm('Approve permanent deletion of {{ p.quarter }} {{ p.year }}?\n\nA {{ hold_days }}-day hold will begin. It will be permanently purged after {{ hold_days }} days unless you restore it.');">
+                  onsubmit="return confirm('Approve permanent deletion of {{ p.quarter }} {{ p.year }}?\n\nA {{ hold_days }}-day hold will begin. It will be permanently purged after {{ hold_days }} days unless you restore it.');"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-danger btn-sm w-100">
                 <i class="bi bi-shield-x me-1"></i>Approve deletion
               </button>
@@ -121,12 +121,12 @@
           </div>
 
           <div class="d-flex gap-2">
-            <form method="POST" action="{{ url_for('trash_restore', project_id=p.id) }}" class="flex-grow-1">
+            <form method="POST" action="{{ url_for('trash_restore', project_id=p.id) }}" class="flex-grow-1"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-teal btn-sm w-100">
                 <i class="bi bi-arrow-counterclockwise me-1"></i>Restore
               </button>
             </form>
-            <form method="POST" action="{{ url_for('trash_cancel', project_id=p.id) }}" class="flex-grow-1">
+            <form method="POST" action="{{ url_for('trash_cancel', project_id=p.id) }}" class="flex-grow-1"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-secondary btn-sm w-100">
                 <i class="bi bi-x-circle me-1"></i>Cancel hold
               </button>

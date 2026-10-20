@@ -1,0 +1,273 @@
+Test ID,Suite,Category,Test,Result,Duration
+T001,calculations,Calculations & generated files,test_ee_zero_employees,PASS,0.00s
+T002,calculations,Calculations & generated files,test_ee_one_employee_full_year,PASS,0.00s
+T003,calculations,Calculations & generated files,test_ee_population_rules,PASS,0.00s
+T004,calculations,Calculations & generated files,test_ee_part_year_remuneration_prorated_by_days,PASS,0.00s
+T005,calculations,Calculations & generated files,test_ee_bad_salaries_flagged[None-error],PASS,0.00s
+T006,calculations,Calculations & generated files,test_ee_bad_salaries_flagged[-1-error],PASS,0.00s
+T007,calculations,Calculations & generated files,test_ee_bad_salaries_flagged[0-warning],PASS,0.00s
+T008,calculations,Calculations & generated files,test_ee_high_salary_and_rounding,PASS,0.00s
+T009,calculations,Calculations & generated files,test_ee_reconciliation_detects_tampered_eea4,PASS,0.00s
+T010,calculations,Calculations & generated files,test_ee_no_period_dates,PASS,0.00s
+T011,calculations,Calculations & generated files,test_eea_reports_scale_and_reconcile[0],PASS,0.78s
+T012,calculations,Calculations & generated files,test_eea_reports_scale_and_reconcile[1],PASS,0.60s
+T013,calculations,Calculations & generated files,test_eea_reports_scale_and_reconcile[10],PASS,0.60s
+T014,calculations,Calculations & generated files,test_eea_reports_scale_and_reconcile[100],PASS,0.77s
+T015,calculations,Calculations & generated files,test_eea_reports_scale_and_reconcile[1000],PASS,0.98s
+T016,calculations,Calculations & generated files,test_coida_assessment_formula,PASS,0.00s
+T017,calculations,Calculations & generated files,test_coida_missing_rate_and_unknown_year,PASS,0.00s
+T018,calculations,Calculations & generated files,test_coida_small_values[0],PASS,0.00s
+T019,calculations,Calculations & generated files,test_coida_small_values[0.01],PASS,0.00s
+T020,calculations,Calculations & generated files,test_coida_small_values[99.995],PASS,0.00s
+T021,calculations,Calculations & generated files,test_coida_negative_earnings_rejected_by_database,PASS,0.39s
+T022,calculations,Calculations & generated files,test_coida_end_to_end_build_and_report,PASS,0.85s
+T023,calculations,Calculations & generated files,test_bbbee_level_boundaries[113-1],PASS,0.00s
+T024,calculations,Calculations & generated files,test_bbbee_level_boundaries[100-1],PASS,0.00s
+T025,calculations,Calculations & generated files,test_bbbee_level_boundaries[99.99-2],PASS,0.00s
+T026,calculations,Calculations & generated files,test_bbbee_level_boundaries[95-2],PASS,0.00s
+T027,calculations,Calculations & generated files,test_bbbee_level_boundaries[94.99-3],PASS,0.00s
+T028,calculations,Calculations & generated files,test_bbbee_level_boundaries[90-3],PASS,0.00s
+T029,calculations,Calculations & generated files,test_bbbee_level_boundaries[89.99-4],PASS,0.00s
+T030,calculations,Calculations & generated files,test_bbbee_level_boundaries[80-4],PASS,0.00s
+T031,calculations,Calculations & generated files,test_bbbee_level_boundaries[79.99-5],PASS,0.00s
+T032,calculations,Calculations & generated files,test_bbbee_level_boundaries[75-5],PASS,0.00s
+T033,calculations,Calculations & generated files,test_bbbee_level_boundaries[74.99-6],PASS,0.00s
+T034,calculations,Calculations & generated files,test_bbbee_level_boundaries[70-6],PASS,0.00s
+T035,calculations,Calculations & generated files,test_bbbee_level_boundaries[69.99-7],PASS,0.00s
+T036,calculations,Calculations & generated files,test_bbbee_level_boundaries[55-7],PASS,0.00s
+T037,calculations,Calculations & generated files,test_bbbee_level_boundaries[54.99-8],PASS,0.00s
+T038,calculations,Calculations & generated files,test_bbbee_level_boundaries[40-8],PASS,0.00s
+T039,calculations,Calculations & generated files,test_bbbee_level_boundaries[39.99-NC],PASS,0.00s
+T040,calculations,Calculations & generated files,test_bbbee_level_boundaries[0-NC],PASS,0.00s
+T041,calculations,Calculations & generated files,test_bbbee_generic_full_calculation[0-85-4],PASS,0.00s
+T042,calculations,Calculations & generated files,test_bbbee_generic_full_calculation[5-90-3],PASS,0.00s
+T043,calculations,Calculations & generated files,test_bbbee_generic_full_calculation[15-100-1],PASS,0.00s
+T044,calculations,Calculations & generated files,test_bbbee_generic_full_calculation[28-113-1],PASS,0.00s
+T045,calculations,Calculations & generated files,test_bbbee_generic_full_calculation[4.99-89.99-4],PASS,0.00s
+T046,calculations,Calculations & generated files,test_bbbee_discounting_one_level,PASS,0.00s
+T047,calculations,Calculations & generated files,test_bbbee_discount_from_level_8_is_non_compliant,PASS,0.00s
+T048,calculations,Calculations & generated files,test_bbbee_qse_priority_rule_ownership_plus_one,PASS,0.00s
+T049,calculations,Calculations & generated files,test_bbbee_eme_automatic_levels[100-1],PASS,0.00s
+T050,calculations,Calculations & generated files,test_bbbee_eme_automatic_levels[51-2],PASS,0.00s
+T051,calculations,Calculations & generated files,test_bbbee_eme_automatic_levels[50.99-4],PASS,0.00s
+T052,calculations,Calculations & generated files,test_bbbee_eme_automatic_levels[0-4],PASS,0.00s
+T053,calculations,Calculations & generated files,test_bbbee_qse_black_owned_automatic_level_wins,PASS,0.00s
+T054,calculations,Calculations & generated files,test_bbbee_invalid_inputs[bad0],PASS,0.00s
+T055,calculations,Calculations & generated files,test_bbbee_invalid_inputs[bad1],PASS,0.00s
+T056,calculations,Calculations & generated files,test_bbbee_invalid_inputs[bad2],PASS,0.00s
+T057,calculations,Calculations & generated files,test_bbbee_invalid_inputs[bad3],PASS,0.00s
+T058,calculations,Calculations & generated files,test_bbbee_invalid_inputs[bad4],PASS,0.00s
+T059,calculations,Calculations & generated files,test_bbbee_classification,PASS,0.00s
+T060,calculations,Calculations & generated files,test_bbbee_reports_never_claim_to_be_certificates,PASS,0.94s
+T061,calculations,Calculations & generated files,test_wsp_reports_and_word_structure,PASS,0.91s
+T062,calculations,Calculations & generated files,test_formula_injection_refused_at_input[intervention_type],PASS,0.61s
+T063,calculations,Calculations & generated files,test_formula_injection_refused_at_input[provider],PASS,0.64s
+T064,calculations,Calculations & generated files,test_formula_neutralised_in_output,PASS,0.00s
+T065,import,Employee validation & import,test_valid_csv,PASS,0.65s
+T066,import,Employee validation & import,test_valid_xlsx,PASS,0.66s
+T067,import,Employee validation & import,test_bad_files_refused[e.csv--empty],PASS,0.68s
+T068,import,Employee validation & import,"test_bad_files_refused[e.csv-emp_number,first_name,last_name,race,gender,occupational_level,salary,employment_date\n-no employees]",PASS,0.68s
+T069,import,Employee validation & import,test_bad_files_refused[e.xlsx-PK\x03\x04garbage-could not be opened],PASS,0.66s
+T070,import,Employee validation & import,test_bad_files_refused[e.xlsx-not a zip-not a valid .xlsx],PASS,0.70s
+T071,import,Employee validation & import,test_bad_files_refused[e.xls-\xd0\xcf\x11\xe0-Only .csv and .xlsx],PASS,0.68s
+T072,import,Employee validation & import,test_bad_files_refused[e.exe-MZ-Only .csv and .xlsx],PASS,0.63s
+T073,import,Employee validation & import,test_bad_files_refused[e.csv-PK\x03\x04-not a text CSV],PASS,0.66s
+T074,import,Employee validation & import,"test_bad_files_refused[e.csv-first_name,last_name\nA,B\n-Missing required column]",PASS,0.64s
+T075,import,Employee validation & import,test_extra_columns_ignored_and_reported,PASS,0.67s
+T076,import,Employee validation & import,test_one_bad_row_imports_nothing,PASS,0.65s
+T077,import,Employee validation & import,test_error_report_download,PASS,0.77s
+T078,import,Employee validation & import,"test_row_validation[E1,A,B,African,Female,Unskilled,-5,2020-01-01-cannot be negative]",PASS,0.60s
+T079,import,Employee validation & import,"test_row_validation[E1,A,B,African,Female,Unskilled,abc,2020-01-01-is not a number]",PASS,0.69s
+T080,import,Employee validation & import,"test_row_validation[E1,A,B,African,Female,Unskilled,1,2099-01-01-cannot be in the future]",PASS,0.65s
+T081,import,Employee validation & import,"test_row_validation[E1,A,B,African,Female,Unskilled,1,31/31/2020-not a valid date]",PASS,0.64s
+T082,import,Employee validation & import,"test_row_validation[E1,A,B,Martian,Female,Unskilled,1,2020-01-01-is not one of]",PASS,0.63s
+T083,import,Employee validation & import,"test_row_validation[E1,A,B,African,Other,Unskilled,1,2020-01-01-is not one of]",PASS,0.67s
+T084,import,Employee validation & import,"test_row_validation[E1,A,B,,Female,Unskilled,1,2020-01-01-required for South African]",PASS,0.64s
+T085,import,Employee validation & import,"test_row_validation[E1,=cmd|' /C calc'!A0,B,African,Female,Unskilled,1,2020-01-01-formula]",PASS,0.64s
+T086,import,Employee validation & import,"test_row_validation[E1,@SUM(1+1),B,African,Female,Unskilled,1,2020-01-01-formula]",PASS,0.65s
+T087,import,Employee validation & import,"test_row_validation[E1,<script>alert(1)</script>,B,African,Female,Unskilled,1,2020-01-01-not allowed in a name]",PASS,0.65s
+T088,import,Employee validation & import,"test_row_validation[bad number!,A,B,African,Female,Unskilled,1,2020-01-01-letters, digits]",PASS,0.68s
+T089,import,Employee validation & import,"test_row_validation[E1,A,B,African,Female,Unskilled,99999999,2020-01-01-implausibly large]",PASS,0.67s
+T090,import,Employee validation & import,test_duplicates_in_file_and_register,PASS,0.67s
+T091,import,Employee validation & import,test_quotes_commas_and_unicode_in_csv,PASS,0.65s
+T092,import,Employee validation & import,test_large_import_performance,PASS,0.95s
+T093,import,Employee validation & import,test_too_many_rows_refused,PASS,0.62s
+T094,import,Employee validation & import,test_sa_id_check[8001015009087-True],PASS,0.00s
+T095,import,Employee validation & import,test_sa_id_check[8001015009086-False],PASS,0.00s
+T096,import,Employee validation & import,test_sa_id_check[800101500908-False],PASS,0.00s
+T097,import,Employee validation & import,test_sa_id_check[8013015009087-False],PASS,0.00s
+T098,import,Employee validation & import,test_sa_id_check[abcdefghijklm-False],PASS,0.00s
+T099,import,Employee validation & import,test_foreign_national_legacy_race_value_and_passport,PASS,0.00s
+T100,import,Employee validation & import,test_termination_before_start_rejected,PASS,0.00s
+T101,import,Employee validation & import,test_long_names_truncated_not_crashing,PASS,0.00s
+T102,import,Employee validation & import,test_employee_form_validation,PASS,0.67s
+T103,import,Employee validation & import,test_xss_payload_escaped_in_register,PASS,0.64s
+T104,import,Employee validation & import,test_sql_injection_in_search_is_inert,PASS,0.64s
+T105,load,Load & concurrency,test_reports_and_pages_at_scale[1000],PASS,0.93s
+T106,load,Load & concurrency,test_reports_and_pages_at_scale[5000],PASS,1.16s
+T107,load,Load & concurrency,test_reports_and_pages_at_scale[10000],PASS,1.42s
+T108,load,Load & concurrency,test_simultaneous_report_generation_never_duplicates_versions,PASS,1.24s
+T109,load,Load & concurrency,test_two_users_editing_same_employee_no_silent_loss,PASS,0.98s
+T110,load,Load & concurrency,test_simultaneous_overlapping_imports,PASS,1.09s
+T111,security,Security / auth / authorisation,test_secret_key_not_hardcoded,PASS,0.41s
+T112,security,Security / auth / authorisation,test_short_env_secret_rejected,PASS,0.04s
+T113,security,Security / auth / authorisation,test_only_one_seed_account_and_no_known_password,PASS,0.54s
+T114,security,Security / auth / authorisation,test_generated_admin_password_when_env_missing,PASS,0.53s
+T115,security,Security / auth / authorisation,test_debug_not_enabled,PASS,0.42s
+T116,security,Security / auth / authorisation,test_cookie_flags,PASS,0.41s
+T117,security,Security / auth / authorisation,test_security_headers,PASS,0.41s
+T118,security,Security / auth / authorisation,test_authenticated_pages_not_cached,PASS,0.64s
+T119,security,Security / auth / authorisation,test_login_success_and_audit,PASS,0.55s
+T120,security,Security / auth / authorisation,test_wrong_password_same_message_as_unknown_user,PASS,0.77s
+T121,security,Security / auth / authorisation,test_lockout_after_five_failures,PASS,1.45s
+T122,security,Security / auth / authorisation,test_disabled_user_cannot_login,PASS,0.78s
+T123,security,Security / auth / authorisation,test_forced_password_change,PASS,1.70s
+T124,security,Security / auth / authorisation,test_logout_requires_post_and_clears_session,PASS,0.63s
+T125,security,Security / auth / authorisation,test_back_button_after_logout_does_not_show_data,PASS,0.70s
+T126,security,Security / auth / authorisation,test_demoted_admin_loses_access_immediately,PASS,0.93s
+T127,security,Security / auth / authorisation,test_deleted_user_session_dies,PASS,1.00s
+T128,security,Security / auth / authorisation,test_forged_role_in_cookie_is_ignored,PASS,0.77s
+T129,security,Security / auth / authorisation,test_inactivity_timeout,PASS,0.59s
+T130,security,Security / auth / authorisation,test_post_without_csrf_rejected[/users/add],PASS,0.60s
+T131,security,Security / auth / authorisation,test_post_without_csrf_rejected[/employees],PASS,0.58s
+T132,security,Security / auth / authorisation,test_post_without_csrf_rejected[/checklist/toggle],PASS,0.55s
+T133,security,Security / auth / authorisation,test_post_without_csrf_rejected[/logout],PASS,1.03s
+T134,security,Security / auth / authorisation,test_post_without_csrf_rejected[/login],PASS,0.60s
+T135,security,Security / auth / authorisation,test_post_with_wrong_csrf_rejected,PASS,0.58s
+T136,security,Security / auth / authorisation,test_json_with_csrf_header_accepted,PASS,0.63s
+T137,security,Security / auth / authorisation,test_user_blocked_from_admin_pages[/users],PASS,0.95s
+T138,security,Security / auth / authorisation,test_user_blocked_from_admin_pages[/audit],PASS,0.83s
+T139,security,Security / auth / authorisation,test_user_blocked_from_admin_pages[/trash],PASS,0.79s
+T140,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/users/add],PASS,0.85s
+T141,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/users/1/reset],PASS,0.86s
+T142,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/users/1/toggle-role],PASS,0.84s
+T143,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/users/1/toggle-active],PASS,0.82s
+T144,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/users/1/delete],PASS,0.83s
+T145,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/trash/1/restore],PASS,0.83s
+T146,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/trash/1/approve],PASS,0.83s
+T147,security,Security / auth / authorisation,test_user_blocked_from_admin_actions[/trash/1/cancel],PASS,0.84s
+T148,security,Security / auth / authorisation,test_user_cannot_hard_delete_employee,PASS,0.82s
+T149,security,Security / auth / authorisation,test_cannot_demote_or_disable_or_delete_self,PASS,0.66s
+T150,security,Security / auth / authorisation,test_cannot_remove_last_active_admin,PASS,0.84s
+T151,security,Security / auth / authorisation,test_password_policy_on_create[short-False],PASS,0.63s
+T152,security,Security / auth / authorisation,test_password_policy_on_create[password123-False],PASS,0.65s
+T153,security,Security / auth / authorisation,test_password_policy_on_create[aaaaaaaaaaaaaa-False],PASS,0.66s
+T154,security,Security / auth / authorisation,test_password_policy_on_create[newuser-secret-99-False],PASS,0.64s
+T155,security,Security / auth / authorisation,test_password_policy_on_create[Good-Enough-Pass-7-True],PASS,0.80s
+T156,security,Security / auth / authorisation,test_duplicate_username_case_insensitive,PASS,0.67s
+T157,security,Security / auth / authorisation,test_invalid_email_rejected[not-an-email],PASS,0.64s
+T158,security,Security / auth / authorisation,test_invalid_email_rejected[a@b],PASS,0.63s
+T159,security,Security / auth / authorisation,test_invalid_email_rejected[a b@c.com],PASS,0.70s
+T160,security,Security / auth / authorisation,test_username_with_script_rejected,PASS,0.66s
+T161,security,Security / auth / authorisation,test_audit_log_cannot_be_updated_or_deleted,PASS,0.60s
+T162,security,Security / auth / authorisation,test_audit_records_ip_and_user_id,PASS,0.59s
+T163,security,Security / auth / authorisation,test_500_page_hides_internals,PASS,0.60s
+T164,security,Security / auth / authorisation,test_healthz,PASS,0.43s
+T165,security,Security / auth / authorisation,test_no_open_redirect_via_referer,PASS,0.74s
+T166,security,Security / auth / authorisation,test_employee_export_admin_only_and_complete,PASS,0.97s
+T167,smoke,Pages & routing,test_admin_pages_render[/],PASS,0.63s
+T168,smoke,Pages & routing,test_admin_pages_render[/employees],PASS,0.65s
+T169,smoke,Pages & routing,test_admin_pages_render[/ee],PASS,0.64s
+T170,smoke,Pages & routing,test_admin_pages_render[/gbs],PASS,0.63s
+T171,smoke,Pages & routing,test_admin_pages_render[/wsp],PASS,0.57s
+T172,smoke,Pages & routing,test_admin_pages_render[/bbbee],PASS,0.62s
+T173,smoke,Pages & routing,test_admin_pages_render[/coida],PASS,0.64s
+T174,smoke,Pages & routing,test_admin_pages_render[/account/password],PASS,0.60s
+T175,smoke,Pages & routing,test_admin_pages_render[/employees/template],PASS,0.61s
+T176,smoke,Pages & routing,test_admin_pages_render[/compliance],PASS,0.58s
+T177,smoke,Pages & routing,test_admin_pages_render[/company],PASS,0.61s
+T178,smoke,Pages & routing,test_admin_pages_render[/rules],PASS,0.61s
+T179,smoke,Pages & routing,test_admin_pages_render[/compliance/1],PASS,0.66s
+T180,smoke,Pages & routing,test_admin_pages_render[/employees?status=ALL],PASS,0.68s
+T181,smoke,Pages & routing,test_admin_pages_render[/employees?status=ARCHIVED&q=x&sort=start&level=Unskilled],PASS,0.65s
+T182,smoke,Pages & routing,test_admin_pages_render[/users],PASS,0.64s
+T183,smoke,Pages & routing,test_admin_pages_render[/audit],PASS,0.65s
+T184,smoke,Pages & routing,test_admin_pages_render[/trash],PASS,0.59s
+T185,smoke,Pages & routing,test_user_pages_render[/],PASS,0.79s
+T186,smoke,Pages & routing,test_user_pages_render[/employees],PASS,0.81s
+T187,smoke,Pages & routing,test_user_pages_render[/ee],PASS,0.82s
+T188,smoke,Pages & routing,test_user_pages_render[/gbs],PASS,0.76s
+T189,smoke,Pages & routing,test_user_pages_render[/wsp],PASS,0.81s
+T190,smoke,Pages & routing,test_user_pages_render[/bbbee],PASS,0.79s
+T191,smoke,Pages & routing,test_user_pages_render[/coida],PASS,0.79s
+T192,smoke,Pages & routing,test_user_pages_render[/account/password],PASS,0.80s
+T193,smoke,Pages & routing,test_user_pages_render[/employees/template],PASS,0.76s
+T194,smoke,Pages & routing,test_user_pages_render[/compliance],PASS,0.79s
+T195,smoke,Pages & routing,test_user_pages_render[/company],PASS,0.75s
+T196,smoke,Pages & routing,test_user_pages_render[/rules],PASS,0.76s
+T197,smoke,Pages & routing,test_user_pages_render[/compliance/1],PASS,0.81s
+T198,smoke,Pages & routing,test_user_pages_render[/employees?status=ALL],PASS,0.80s
+T199,smoke,Pages & routing,test_user_pages_render[/employees?status=ARCHIVED&q=x&sort=start&level=Unskilled],PASS,0.87s
+T200,smoke,Pages & routing,test_public_pages_render[/home],PASS,0.41s
+T201,smoke,Pages & routing,test_public_pages_render[/login],PASS,0.43s
+T202,smoke,Pages & routing,test_public_pages_render[/healthz],PASS,0.40s
+T203,smoke,Pages & routing,test_anonymous_redirected_to_login[/],PASS,0.40s
+T204,smoke,Pages & routing,test_anonymous_redirected_to_login[/employees],PASS,0.40s
+T205,smoke,Pages & routing,test_anonymous_redirected_to_login[/ee],PASS,0.42s
+T206,smoke,Pages & routing,test_anonymous_redirected_to_login[/gbs],PASS,0.42s
+T207,smoke,Pages & routing,test_anonymous_redirected_to_login[/wsp],PASS,0.39s
+T208,smoke,Pages & routing,test_anonymous_redirected_to_login[/bbbee],PASS,0.41s
+T209,smoke,Pages & routing,test_anonymous_redirected_to_login[/coida],PASS,0.42s
+T210,smoke,Pages & routing,test_anonymous_redirected_to_login[/account/password],PASS,0.43s
+T211,smoke,Pages & routing,test_anonymous_redirected_to_login[/employees/template],PASS,0.38s
+T212,smoke,Pages & routing,test_anonymous_redirected_to_login[/compliance],PASS,0.42s
+T213,smoke,Pages & routing,test_anonymous_redirected_to_login[/company],PASS,0.41s
+T214,smoke,Pages & routing,test_anonymous_redirected_to_login[/rules],PASS,0.39s
+T215,smoke,Pages & routing,test_anonymous_redirected_to_login[/compliance/1],PASS,0.42s
+T216,smoke,Pages & routing,test_anonymous_redirected_to_login[/employees?status=ALL],PASS,0.42s
+T217,smoke,Pages & routing,test_anonymous_redirected_to_login[/employees?status=ARCHIVED&q=x&sort=start&level=Unskilled],PASS,0.40s
+T218,smoke,Pages & routing,test_anonymous_redirected_to_login[/users],PASS,0.40s
+T219,smoke,Pages & routing,test_anonymous_redirected_to_login[/audit],PASS,0.42s
+T220,smoke,Pages & routing,test_anonymous_redirected_to_login[/trash],PASS,0.41s
+T221,smoke,Pages & routing,test_no_cdn_assets,PASS,0.44s
+T222,smoke,Pages & routing,test_gbs_project_page_renders,PASS,0.67s
+T223,smoke,Pages & routing,test_legacy_report_urls_redirect_to_records,PASS,0.67s
+T224,workflow,"Workflow, history, evidence",test_record_created_with_suggested_period,PASS,0.65s
+T225,workflow,"Workflow, history, evidence",test_duplicate_period_refused,PASS,0.61s
+T226,workflow,"Workflow, history, evidence",test_duplicate_period_refused_at_database_level,PASS,0.41s
+T227,workflow,"Workflow, history, evidence",test_invalid_period_dates_refused,PASS,0.68s
+T228,workflow,"Workflow, history, evidence",test_cannot_prepare_without_reports,PASS,0.73s
+T229,workflow,"Workflow, history, evidence",test_full_happy_path_with_separation_of_duties,PASS,1.66s
+T230,workflow,"Workflow, history, evidence",test_request_review_needs_reviewer,PASS,0.91s
+T231,workflow,"Workflow, history, evidence",test_admin_self_approval_needs_override_reason,PASS,0.93s
+T232,workflow,"Workflow, history, evidence",test_unassigned_user_cannot_approve,PASS,1.60s
+T233,workflow,"Workflow, history, evidence",test_cannot_bypass_workflow_by_post_manipulation[forged0],PASS,0.74s
+T234,workflow,"Workflow, history, evidence",test_cannot_bypass_workflow_by_post_manipulation[forged1],PASS,0.75s
+T235,workflow,"Workflow, history, evidence",test_cannot_bypass_workflow_by_post_manipulation[forged2],PASS,0.72s
+T236,workflow,"Workflow, history, evidence",test_cannot_bypass_workflow_by_post_manipulation[forged3],PASS,0.74s
+T237,workflow,"Workflow, history, evidence",test_cannot_bypass_workflow_by_post_manipulation[forged4],PASS,0.71s
+T238,workflow,"Workflow, history, evidence",test_cannot_bypass_workflow_by_post_manipulation[forged5],PASS,0.74s
+T239,workflow,"Workflow, history, evidence",test_failed_checks_block_preparation,PASS,0.88s
+T240,workflow,"Workflow, history, evidence",test_regenerate_requires_reason_and_keeps_old_version,PASS,0.89s
+T241,workflow,"Workflow, history, evidence",test_report_versions_are_immutable,PASS,0.82s
+T242,workflow,"Workflow, history, evidence",test_submitted_record_is_locked,PASS,0.95s
+T243,workflow,"Workflow, history, evidence",test_only_admin_reopens_with_reason,PASS,1.43s
+T244,workflow,"Workflow, history, evidence",test_stale_form_cannot_overwrite,PASS,0.76s
+T245,workflow,"Workflow, history, evidence",test_john_scenario_history_is_preserved,PASS,1.33s
+T246,workflow,"Workflow, history, evidence",test_company_change_does_not_alter_old_report,PASS,0.88s
+T247,workflow,"Workflow, history, evidence",test_tampered_report_file_detected,PASS,0.81s
+T248,workflow,"Workflow, history, evidence",test_evidence_upload_and_download,PASS,0.71s
+T249,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[invoice.pdf-MZ\x90\x00 fake exe],PASS,0.72s
+T250,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[script.pdf.exe-MZ],PASS,0.69s
+T251,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[shell.php-<?php system($_GET['c']); ?>],PASS,0.75s
+T252,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[page.html-<script>alert(1)</script>],PASS,0.70s
+T253,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[macro.xlsm-PK\x03\x04],PASS,0.73s
+T254,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[empty.pdf-],PASS,0.72s
+T255,workflow,"Workflow, history, evidence",test_dangerous_evidence_rejected[noext-%PDF],PASS,0.70s
+T256,workflow,"Workflow, history, evidence",test_evidence_path_traversal_name_is_neutralised,PASS,0.75s
+T257,workflow,"Workflow, history, evidence",test_oversized_upload_rejected,PASS,0.74s
+T258,workflow,"Workflow, history, evidence",test_unknown_ids_return_404,PASS,0.61s
+T259,workflow,"Workflow, history, evidence",test_evidence_cannot_be_deleted,PASS,0.72s
+T260,workflow,"Workflow, history, evidence",test_checklist_rejects_unknown_scopes[ee],PASS,0.65s
+T261,workflow,"Workflow, history, evidence",test_checklist_rejects_unknown_scopes[gbs:1],PASS,0.59s
+T262,workflow,"Workflow, history, evidence",test_checklist_rejects_unknown_scopes[record:9999],PASS,0.65s
+T263,workflow,"Workflow, history, evidence",test_checklist_rejects_unknown_scopes[record:abc],PASS,0.62s
+T264,workflow,"Workflow, history, evidence",test_checklist_rejects_unknown_scopes[../etc],PASS,0.62s
+T265,workflow,"Workflow, history, evidence",test_checklist_rejects_unknown_scopes[],PASS,0.50s
+T266,workflow,"Workflow, history, evidence",test_checklist_reset_keeps_history,PASS,0.57s
+T267,workflow,"Workflow, history, evidence",test_gbs_one_claim_per_quarter_and_year_rollover,PASS,0.72s
+T268,workflow,"Workflow, history, evidence",test_gbs_submit_route_cannot_bypass_approval,PASS,0.78s
+T269,workflow,"Workflow, history, evidence",test_gbs_trash_restore_and_purge_keep_history,PASS,1.04s
+T270,workflow,"Workflow, history, evidence",test_submitted_gbs_claim_cannot_be_trashed,PASS,0.80s
+T271,workflow,"Workflow, history, evidence",test_dashboard_health_and_notifications,PASS,0.62s
+T272,workflow,"Workflow, history, evidence",test_audit_has_before_after_for_employee_edit,PASS,0.68s
