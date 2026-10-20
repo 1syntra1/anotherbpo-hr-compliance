@@ -86,3 +86,23 @@ def test_bursary_rejects_disguised_executable(admin_client, app_module):
                             "file": (io.BytesIO(b"MZ\x90\x00 not a pdf"), "evil.pdf")},
                       content_type="multipart/form-data")
     assert query(app_module, "SELECT COUNT(*) FROM wsp_documents WHERE entity_id=?", (aid,))[0][0] == 0
+
+
+def test_learnerships_page_loads(admin_client):
+    r = admin_client.get("/wsp/learnerships?year=2026")
+    assert r.status_code == 200 and b"October" in r.data
+
+
+def test_learnership_add_update_delete(admin_client, app_module):
+    post(admin_client, "/wsp/learnerships/add?year=2026",
+         {"year": "2026", "programme_type": "Learnership", "title": "NQF4 Contact Centre",
+          "target_count": "15", "recruitment_start": "2026-10-01", "commence_date": "2027-01-15",
+          "status": "Planned"}, token_from="/wsp/learnerships")
+    rows = query(app_module, "SELECT id, title, target_count, status FROM learnership_plans WHERE year=2026")
+    assert rows and rows[0][1] == "NQF4 Contact Centre" and rows[0][2] == 15
+    pid = rows[0][0]
+    post(admin_client, "/wsp/learnerships/%d/update" % pid,
+         {"status": "Recruiting", "target_count": "20"}, token_from="/wsp/learnerships")
+    assert query(app_module, "SELECT status, target_count FROM learnership_plans WHERE id=?", (pid,))[0]["status"] == "Recruiting"
+    post(admin_client, "/wsp/learnerships/%d/delete" % pid, {}, token_from="/wsp/learnerships")
+    assert query(app_module, "SELECT COUNT(*) FROM learnership_plans WHERE id=?", (pid,))[0][0] == 0

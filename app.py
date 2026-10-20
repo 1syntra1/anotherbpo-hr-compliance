@@ -2358,6 +2358,117 @@ def wsp_bursary_document(award_id):
     return redirect(url_for("wsp_bursaries", year=a["year"]))
 
 
+# ── Learnerships & internships ──
+
+PROGRAMME_TYPES = ["Learnership", "Internship"]
+LEARNERSHIP_STATUSES = ["Planned", "Recruiting", "Selection", "Contracting", "In progress",
+                        "Completed", "Cancelled"]
+
+
+def _parse_dates(f, keys, errors):
+    out = {}
+    for k in keys:
+        v = (f.get(k) or "").strip() or None
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                errors.append("%s is not a valid date." % k.replace("_", " ").capitalize())
+                v = None
+        out[k] = v
+    return out
+
+
+@app.route("/wsp/learnerships")
+@login_required
+def wsp_learnerships():
+    db = get_db()
+    year = _int_or_none(request.values.get("year")) or date.today().year
+    plans = db.execute("SELECT * FROM learnership_plans WHERE year=? ORDER BY programme_type, id", (year,)).fetchall()
+    # Default cycle dates for the add form: recruit Oct, select Nov, contract Dec, commence Jan (next year)
+    defaults = {"recruitment_start": "%d-10-01" % year, "selection_by": "%d-11-30" % year,
+                "contracts_by": "%d-12-15" % year, "commence_date": "%d-01-15" % (year + 1)}
+    return render_template("wsp_learnerships.html", year=year, years=_tracker_years(), plans=plans,
+                           programme_types=PROGRAMME_TYPES, statuses=LEARNERSHIP_STATUSES, defaults=defaults)
+
+
+@app.route("/wsp/learnerships/add", methods=["POST"])
+@login_required
+def wsp_learnership_add():
+    db = get_db()
+    f = request.form
+    year = _int_or_none(f.get("year")) or date.today().year
+    title = (f.get("title") or "").strip()[:200]
+    errors = []
+    if not title:
+        errors.append("Give the programme a title.")
+    guard = _formula_guard(f, ("title", "notes"))
+    if guard:
+        errors.append(guard)
+    ptype = f.get("programme_type") if f.get("programme_type") in PROGRAMME_TYPES else "Learnership"
+    status = f.get("status") if f.get("status") in LEARNERSHIP_STATUSES else "Planned"
+    dates = _parse_dates(f, ("recruitment_start", "selection_by", "contracts_by", "commence_date"), errors)
+    if errors:
+        for e in errors[:6]:
+            flash(e, "danger")
+        return redirect(url_for("wsp_learnerships", year=year))
+    cur = db.execute(
+        """INSERT INTO learnership_plans (year, programme_type, title, target_count, recruitment_start,
+               selection_by, contracts_by, commence_date, status, notes, updated_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (year, ptype, title, _int_or_none(f.get("target_count")), dates["recruitment_start"],
+         dates["selection_by"], dates["contracts_by"], dates["commence_date"], status,
+         (f.get("notes") or "").strip()[:300] or None, g.user["id"]))
+    log_action("learnership_add", "wsp", "Added %s plan '%s' (%d)" % (ptype, title, year),
+               entity="learnership_plan", entity_id=cur.lastrowid, commit=False)
+    db.commit()
+    flash("Programme plan added.", "success")
+    return redirect(url_for("wsp_learnerships", year=year))
+
+
+@app.route("/wsp/learnerships/<int:plan_id>/update", methods=["POST"])
+@login_required
+def wsp_learnership_update(plan_id):
+    db = get_db()
+    p = db.execute("SELECT * FROM learnership_plans WHERE id=?", (plan_id,)).fetchone()
+    if p is None:
+        abort(404)
+    f = request.form
+    errors = []
+    status = f.get("status") if f.get("status") in LEARNERSHIP_STATUSES else p["status"]
+    dates = _parse_dates(f, ("recruitment_start", "selection_by", "contracts_by", "commence_date"), errors)
+    if errors:
+        for e in errors[:6]:
+            flash(e, "danger")
+        return redirect(url_for("wsp_learnerships", year=p["year"]))
+    db.execute("""UPDATE learnership_plans SET target_count=?, recruitment_start=?, selection_by=?,
+                  contracts_by=?, commence_date=?, status=?, notes=?, updated_at=datetime('now'), updated_by=?
+                  WHERE id=?""",
+               (_int_or_none(f.get("target_count")), dates["recruitment_start"], dates["selection_by"],
+                dates["contracts_by"], dates["commence_date"], status,
+                (f.get("notes") or "").strip()[:300] or None, g.user["id"], plan_id))
+    log_action("learnership_update", "wsp", "Updated %s plan '%s'" % (p["programme_type"], p["title"]),
+               entity="learnership_plan", entity_id=plan_id, commit=False)
+    db.commit()
+    flash("Programme plan updated.", "success")
+    return redirect(url_for("wsp_learnerships", year=p["year"]))
+
+
+@app.route("/wsp/learnerships/<int:plan_id>/delete", methods=["POST"])
+@login_required
+def wsp_learnership_delete(plan_id):
+    db = get_db()
+    p = db.execute("SELECT * FROM learnership_plans WHERE id=?", (plan_id,)).fetchone()
+    if p is None:
+        abort(404)
+    db.execute("DELETE FROM learnership_plans WHERE id=?", (plan_id,))
+    log_action("learnership_delete", "wsp", "Deleted %s plan '%s'" % (p["programme_type"], p["title"]),
+               entity="learnership_plan", entity_id=plan_id, commit=False)
+    db.commit()
+    flash("Programme plan removed.", "success")
+    return redirect(url_for("wsp_learnerships", year=p["year"]))
+
+
 # ─── B-BBEE ──────────────────────────────────────────────────────────────────
 
 @app.route("/bbbee")

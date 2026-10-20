@@ -630,6 +630,26 @@ def m007_bursaries(db):
     """)
 
 
+# ─── 8. WSP: learnership & internship recruitment plans ──────────────────────
+
+def m008_learnerships(db):
+    _script(db, """
+        CREATE TABLE learnership_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year INTEGER NOT NULL,
+            programme_type TEXT NOT NULL DEFAULT 'Learnership',   -- Learnership | Internship
+            title TEXT NOT NULL,
+            target_count INTEGER,
+            recruitment_start TEXT, selection_by TEXT, contracts_by TEXT, commence_date TEXT,
+            status TEXT NOT NULL DEFAULT 'Planned',
+            notes TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX ix_learnership_year ON learnership_plans(year);
+    """)
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
@@ -638,6 +658,7 @@ MIGRATIONS = [
     (5, "WSP: monthly SDL/EMP201 tracker", m005_sdl_tracker),
     (6, "WSP: SETA grant tracker", m006_grants),
     (7, "WSP: bursary tracker + operational document store", m007_bursaries),
+    (8, "WSP: learnership & internship plans", m008_learnerships),
 ]
 
 
