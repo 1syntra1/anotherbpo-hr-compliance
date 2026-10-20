@@ -528,10 +528,33 @@ def m003_compliance_records(db):
                 db.execute("UPDATE %s SET module=? WHERE module='ee'" % t, ("record:%d" % rid,))
 
 
+# ─── 4. Dash BPO: MICT SETA only + SDL reference ─────────────────────────────
+
+def m004_mict_seta_sdl(db):
+    """Dash BPO uses MICT SETA only, SDL reference L640813558. Append a company-profile
+    version with these set (merging any existing values) unless already correct."""
+    SETA, SDL = "MICT SETA", "L640813558"
+    data_cols = [r[1] for r in db.execute("PRAGMA table_info(company_profiles)").fetchall()
+                 if r[1] not in ("id", "created_at")]
+    row = db.execute(
+        "SELECT %s FROM company_profiles ORDER BY id DESC LIMIT 1" % ", ".join(data_cols)).fetchone()
+    cur = dict(zip(data_cols, row)) if row else {c: None for c in data_cols}
+    if cur.get("seta") == SETA and cur.get("sdl_number") == SDL:
+        return
+    cur["seta"], cur["sdl_number"], cur["created_by"] = SETA, SDL, None
+    db.execute("INSERT INTO company_profiles (%s) VALUES (%s)"
+               % (", ".join(data_cols), ", ".join("?" * len(data_cols))),
+               [cur.get(c) for c in data_cols])
+    db.execute("""INSERT INTO audit_log (username, role, action, category, detail, entity)
+                  VALUES ('system','-','company_seta_sdl_set','company',
+                          'Set SETA to MICT SETA and SDL number to L640813558 during upgrade','company_profile')""")
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
     (3, "compliance records, workflow, report versions, evidence, rules", m003_compliance_records),
+    (4, "Dash BPO: MICT SETA + SDL number", m004_mict_seta_sdl),
 ]
 
 

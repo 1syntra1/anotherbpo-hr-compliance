@@ -275,12 +275,9 @@ with app.app_context():
     init_db()
 
 
-SETAS = [
-    "AGRISETA", "BANKSETA", "CATHSSETA", "CHIETA", "CETA",
-    "ETDP SETA", "FASSET", "FOODBEV", "HWSETA", "INSETA",
-    "LGSETA", "MAPPP SETA", "MerSETA", "MICT SETA", "MQA",
-    "NSDMS", "PSETA", "SASSETA", "Services SETA", "TETA", "W&RSETA"
-]
+# Dash BPO falls under MICT SETA only. Keep this a single entry so the company
+# profile cannot be pointed at the wrong SETA.
+SETAS = ["MICT SETA"]
 
 
 if os.environ.get("HR_TRUST_PROXY") == "1":
