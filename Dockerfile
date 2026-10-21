@@ -19,6 +19,10 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY --chown=root:root . .
+# Normalise permissions: readable (and dirs traversable) by the non-root runtime user,
+# but still root-owned so the app cannot modify its own code. Guards against a restrictive
+# host umask (e.g. 077) carrying 600 modes into the image via COPY.
+RUN chmod -R a+rX /app
 
 USER app
 VOLUME ["/data"]
