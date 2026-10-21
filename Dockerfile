@@ -1,4 +1,4 @@
-# AnotherBPO HR Compliance Suite — production image
+# Dash BPO HR Compliance Suite — production image
 FROM python:3.11.9-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

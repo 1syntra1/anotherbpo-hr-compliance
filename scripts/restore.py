@@ -42,10 +42,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("archive")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    ap.add_argument("--passphrase", default=os.environ.get("HR_BACKUP_PASSPHRASE"),
+                    help="passphrase for an encrypted backup (default: HR_BACKUP_PASSPHRASE env)")
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as tmp:
-        with tarfile.open(args.archive, "r:gz") as tar:
+        import _crypto
+        archive = args.archive
+        if _crypto.is_encrypted(archive):
+            if not args.passphrase:
+                sys.exit("This backup is encrypted. Provide --passphrase or set HR_BACKUP_PASSPHRASE.")
+            archive = os.path.join(tmp, "decrypted.tar.gz")
+            try:
+                _crypto.decrypt_file(args.archive, archive, args.passphrase)
+            except ValueError as e:
+                sys.exit(str(e))
+        with tarfile.open(archive, "r:gz") as tar:
             tar.extractall(tmp, members=list(safe_members(tar, tmp)))
         mpath = os.path.join(tmp, "MANIFEST.json")
         if not os.path.exists(mpath):

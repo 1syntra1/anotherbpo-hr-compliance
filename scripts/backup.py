@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--keep", type=int, default=14, help="number of archives to keep (0 = all)")
     ap.add_argument("--include-secret", action="store_true",
                     help="also back up .secret_key (sessions survive a restore)")
+    ap.add_argument("--passphrase", default=os.environ.get("HR_BACKUP_PASSPHRASE"),
+                    help="encrypt the archive at rest (default: HR_BACKUP_PASSPHRASE env). "
+                         "Keep it safe — a lost passphrase means the backup cannot be restored.")
     args = ap.parse_args()
 
     db_path = os.path.join(data_dir, "hr_audit.db")
@@ -91,14 +94,28 @@ def main():
             for full, arc in members:
                 tar.add(full, arcname=arc)
             tar.add(mpath, arcname="MANIFEST.json")
-        os.replace(partial, final)
+
+        if args.passphrase:
+            import _crypto
+            enc_partial = final + ".enc.partial"
+            _crypto.encrypt_file(partial, enc_partial, args.passphrase)
+            os.remove(partial)
+            final = final + ".enc"
+            os.replace(enc_partial, final)
+        else:
+            os.replace(partial, final)
+            print("WARNING: backup is NOT encrypted. It contains employee personal "
+                  "information - set HR_BACKUP_PASSPHRASE (or --passphrase) for go-live.",
+                  file=sys.stderr)
 
     if args.keep:
-        archives = sorted(f for f in os.listdir(args.dest) if f.startswith("hrcs-backup-") and f.endswith(".tar.gz"))
+        archives = sorted(f for f in os.listdir(args.dest)
+                          if f.startswith("hrcs-backup-") and (f.endswith(".tar.gz") or f.endswith(".tar.gz.enc")))
         for old in archives[:-args.keep]:
             os.remove(os.path.join(args.dest, old))
 
-    print("Backup written: %s (%d files)" % (final, len(manifest["files"])))
+    print("Backup written: %s (%d files%s)"
+          % (final, len(manifest["files"]), ", encrypted" if args.passphrase else ""))
 
 
 if __name__ == "__main__":

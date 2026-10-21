@@ -57,8 +57,12 @@ The code-owned conditions were fixed and verified immediately after the assessme
   full suite now **299 passing**.
 - **F7 DONE** — `pip-audit` added to `requirements-dev.txt` for CI.
 
-Still open (owner = Sydney): **F3** (role-model decision) and the deploy-layer items in
-**F8** (Coolify HSTS/TLS, non-root container, env secrets, backup encryption).
+**F3 DECIDED (2026-10-21):** the system has **one administrator + ≤10 trusted HR/compliance
+users**, all of whom legitimately need the HR data for statutory work. The flat two-role
+model is therefore **accepted by design**; no finer roles are required at this scale. Revisit
+only if accounts are ever extended beyond the compliance team (e.g. line managers).
+
+Still open (owner = Sydney + me): the deploy-layer items in **F8**.
 
 ---
 
@@ -180,12 +184,20 @@ nonetheless a **required pre-production fix** (it can alter a compliance figure)
 - Install `pip-audit` and run it in CI at go-live; several installed versions are numbered
   ahead of known public releases and cannot be CVE-mapped from memory alone.
 
-### F8 — Deployment-layer controls  ·  NOT TESTED (go-live)
+### F8 — Deployment-layer controls  ·  PARTLY DONE / remainder is operator config
 
-- Nothing is deployed; the Dockerfile + Coolify plan was not live-tested. At go-live verify:
-  HSTS + TLS redirect at the proxy, container runs non-root, secrets injected via env (not
-  baked into the image), `HR_TRUST_PROXY=1` so client IPs are correct in the audit log,
-  `HR_COOKIE_SECURE` left at default (on), and backup encryption/retention.
+Hardened in the repo (2026-10-21) and captured in **`docs/GO_LIVE_CHECKLIST.md`**:
+- Container already runs **non-root** (uid 10001, `nologin`), app code owned by root (not
+  writable by the runtime user), `/data` the only writable path, `HR_TRUST_PROXY=1` baked in.
+- **Backup encryption added** — `scripts/backup.py`/`restore.py` now support opt-in
+  passphrase encryption (`HR_BACKUP_PASSPHRASE`, PBKDF2-SHA256 + Fernet); unencrypted runs
+  warn. Round-trip tested (wrong passphrase rejected, correct restores with integrity ok).
+- **gunicorn hardened** — request-size limits added; `forwarded_allow_ips` now env-tunable
+  (`FORWARDED_ALLOW_IPS`) so the proxy can be pinned if the port is ever exposed.
+
+Remaining (operator, at deploy — see the checklist): enable `HR_BACKUP_PASSPHRASE` + schedule
++ off-host copy + test restore; HSTS/TLS redirect at the Coolify proxy; strong
+`HR_ADMIN_PASSWORD`; **clear demo data / start from an empty `/data`**; create the real accounts.
 
 ---
 
@@ -317,7 +329,7 @@ Assuming they hold a valid, admin-provisioned `user` account:
 | AI Security | N/A (no AI/LLM) |
 | Business Logic | PASS |
 | Availability | PASS WITH OBSERVATIONS (F5) |
-| Backup / Recovery | NOT TESTED (go-live) |
+| Backup / Recovery | PASS WITH OBSERVATIONS (encryption added + round-trip tested; operator must enable & schedule) |
 
 ---
 
