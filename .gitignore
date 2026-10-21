@@ -12,8 +12,6 @@ data/hr_audit.db
 data/uploads/
 data/*.db
 
-# ── Company logo / branding assets (not shipped to the public test) ──
-static/images/logo.png
 
 # ── Local / editor / OS ──
 .claude/

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AnotherBPO — SA HR Compliance Suite</title>
+  <title>Dash BPO — SA HR Compliance Suite</title>
   <link href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet" />
   <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet" />
   <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet" />
@@ -16,7 +16,7 @@
 <section class="landing-hero">
   <!-- Nav bar -->
   <nav class="landing-nav">
-    <div class="brand-wordmark brand-wordmark-light" style="font-size:1.6rem;">Another<span class="brand-accent-light">BPO</span></div>
+    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Dash BPO" style="height:44px;width:auto;">
     <div class="d-flex gap-2">
       <a href="{{ url_for('login') }}" class="btn btn-outline-light btn-sm px-4 rounded-pill">
         <i class="bi bi-box-arrow-in-right me-1"></i>Login
@@ -333,7 +333,7 @@
       <div class="col-lg-8">
         <h2 class="fw-bold mb-2" style="font-size:1.9rem;">Ready to simplify your compliance?</h2>
         <p class="mb-0" style="color:rgba(255,255,255,.75);font-size:1.05rem;">
-          Log in to the AnotherBPO HR Compliance Suite and manage GBS, WSP, BBBEE, and COIDA from one dashboard.
+          Log in to the Dash BPO HR Compliance Suite and manage GBS, WSP, BBBEE, and COIDA from one dashboard.
         </p>
       </div>
       <div class="col-lg-4 text-lg-end">
@@ -348,7 +348,7 @@
 <!-- Footer -->
 <footer style="background:#0d1e3a;color:rgba(255,255,255,.45);padding:1.5rem 0;text-align:center;font-size:.8rem;">
   <div class="container d-flex flex-wrap justify-content-between align-items-center">
-    <span>© {{ now().year }} AnotherBPO. HR Compliance Suite.</span>
+    <span>© {{ now().year }} Dash BPO. HR Compliance Suite.</span>
     <span>GBS &nbsp;·&nbsp; WSP &nbsp;·&nbsp; BBBEE &nbsp;·&nbsp; COIDA</span>
     <a href="{{ url_for('login') }}" style="color:var(--cb-teal-light);">Login &rarr;</a>
   </div>

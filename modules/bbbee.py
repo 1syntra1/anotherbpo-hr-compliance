@@ -235,7 +235,7 @@ def generate_pdf(s, ctx):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=2 * cm,
                             rightMargin=2 * cm, title="Internal B-BBEE Calculation",
-                            author="AnotherBPO HR Compliance Suite", invariant=1)
+                            author="Dash BPO HR Compliance Suite", invariant=1)
     st = getSampleStyleSheet()
     navy = colors.HexColor("#1A2744")
     story = [

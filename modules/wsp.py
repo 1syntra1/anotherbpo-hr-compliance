@@ -141,7 +141,7 @@ def generate_wsp_word(snapshot, ctx):
                     (r["actual_date"] if completed else r["target_date"]) or ""]
             for j, v in enumerate(vals):
                 tbl.rows[i].cells[j].text = v
-    doc.core_properties.author = "AnotherBPO HR Compliance Suite"
+    doc.core_properties.author = "Dash BPO HR Compliance Suite"
     if ctx.get("generated_dt") is not None:
         doc.core_properties.created = ctx["generated_dt"]
         doc.core_properties.modified = ctx["generated_dt"]
