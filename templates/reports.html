@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block page_title %}Reports &amp; Insights{% endblock %}
+
+{% macro report_card(icon, title, desc, endpoint) %}
+<div class="col-md-6 col-xl-4">
+  <a href="{{ url_for(endpoint) }}" class="card border-0 shadow-sm h-100 text-decoration-none">
+    <div class="card-body">
+      <div class="stat-ico mb-2" style="background:rgba(43,170,173,.1);color:var(--cb-teal-dark);"><i class="bi bi-{{ icon }}"></i></div>
+      <div class="fw-bold text-navy">{{ title }}</div>
+      <p class="small text-muted mb-0">{{ desc }}</p>
+    </div>
+  </a>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-sm-4"><div class="card border-0 shadow-sm"><div class="card-body stat-tile">
+    <div class="stat-ico" style="background:#e8f0fb;color:#2f6fb0;"><i class="bi bi-people-fill"></i></div>
+    <div><div class="stat-num">{{ emp_total }}</div><small class="text-muted">Active employees</small></div></div></div></div>
+  <div class="col-sm-4"><div class="card border-0 shadow-sm"><div class="card-body stat-tile">
+    <div class="stat-ico" style="background:#e7f6ec;color:#2e9e4f;"><i class="bi bi-send-check"></i></div>
+    <div><div class="stat-num">{{ submissions }}</div><small class="text-muted">Submissions recorded</small></div></div></div></div>
+  <div class="col-sm-4"><div class="card border-0 shadow-sm"><div class="card-body stat-tile">
+    <div class="stat-ico" style="background:#fdf2e3;color:#c47d16;"><i class="bi bi-file-earmark-spreadsheet"></i></div>
+    <div><div class="stat-num">{{ reports_made }}</div><small class="text-muted">Report versions generated</small></div></div></div></div>
+</div>
+
+<div class="row g-3">
+  {{ report_card("file-earmark-text", "Compliance Summary", "Overall health, module status and open obligations.", "dashboard") }}
+  {{ report_card("clock-history", "Submission History", "What was submitted, when, and with which report versions.", "compliance_list") }}
+  {{ report_card("people", "Employee Demographics", "Employment-equity workforce profile across occupational levels.", "ee") }}
+  {{ report_card("mortarboard", "Training Report", "WSP/ATR dashboard: planned vs completed, spend, grants and bursaries.", "wsp_dashboard") }}
+  {{ report_card("folder2-open", "Document Repository", "Every supporting document across training, bursaries and learnerships.", "wsp_documents_repo") }}
+  {{ report_card("journal-check", "Rules Register", "Regulatory rates, thresholds and deadlines in force.", "rules_register") }}
+</div>
+<p class="small text-muted mt-3"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Statutory reports (EEA2/EEA4, W.As.8, WSP/ATR, B-BBEE) are generated and version-controlled inside each compliance record.</p>
+{% endblock %}

@@ -9,205 +9,94 @@
   <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet" />
   <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet" />
 </head>
-<body>
+<body class="app-shell">
 
-<!-- ═══ SIDEBAR ══════════════════════════════════════════════ -->
-<nav id="sidebar" class="sidebar">
+<!-- ═══ PRIMARY TOP NAV ══════════════════════════════════════════ -->
+<header class="appbar">
+  <div class="appbar-inner">
+    <a class="appbar-brand" href="{{ url_for('dashboard') }}">Another<span class="brand-accent">BPO</span></a>
 
-  <!-- Wordmark -->
-  <div class="sidebar-brand">
-    <a href="{{ url_for('dashboard') }}" class="brand-wordmark text-decoration-none">
-      Another<span class="brand-accent">BPO</span>
-    </a>
-    <small>HR Compliance Suite</small>
-  </div>
-
-  <!-- Nav -->
-  <ul class="nav flex-column px-2 mt-3 flex-grow-1">
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}"
-         href="{{ url_for('dashboard') }}">
-        <i class="bi bi-speedometer2 me-2"></i>Dashboard
+    <nav class="appbar-nav" aria-label="Primary navigation">
+      {% for s in nav_sections %}
+      <a class="appbar-link {{ 'active' if s.key == active_section }}" href="{{ url_for(s.endpoint) }}">
+        <i class="bi bi-{{ s.icon }}" aria-hidden="true"></i><span>{{ s.label }}</span>
       </a>
-    </li>
+      {% endfor %}
+    </nav>
 
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'employee' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('employees') }}">
-        <i class="bi bi-people-fill me-2"></i>Employees
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if (request.endpoint or '').startswith(('compliance', 'record')) %}active{% endif %}"
-         href="{{ url_for('compliance_list') }}">
-        <i class="bi bi-folder-check me-2"></i>Compliance Records
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if request.endpoint == 'company' %}active{% endif %}"
-         href="{{ url_for('company') }}">
-        <i class="bi bi-building me-2"></i>Company Profile
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if (request.endpoint or '').startswith('rules') %}active{% endif %}"
-         href="{{ url_for('rules_register') }}">
-        <i class="bi bi-journal-check me-2"></i>Rules Register
-      </a>
-    </li>
-
-    <div class="sidebar-section-label">Compliance Modules</div>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'ee' == (request.endpoint or '') or 'ee_' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('ee') }}">
-        <i class="bi bi-bar-chart-steps me-2"></i>Employment Equity
-        <span class="badge bg-secondary ms-auto" style="font-size:.6rem;">EEA2 &amp; EEA4</span>
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'gbs' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('gbs') }}">
-        <i class="bi bi-globe2 me-2"></i>GBS
-        <span class="badge bg-secondary ms-auto" style="font-size:.6rem;">the dtic</span>
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'wsp' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('wsp') }}">
-        <i class="bi bi-mortarboard-fill me-2"></i>WSP
-        <span class="badge bg-secondary ms-auto" style="font-size:.6rem;">Skills</span>
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'bbbee' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('bbbee') }}">
-        <i class="bi bi-award-fill me-2"></i>B-BBEE
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'coida' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('coida') }}">
-        <i class="bi bi-shield-fill-check me-2"></i>COIDA
-        <span class="badge bg-secondary ms-auto" style="font-size:.6rem;">W.As.8</span>
-      </a>
-    </li>
-
-    {% if is_admin %}
-    <div class="sidebar-section-label">Administration</div>
-
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'trash' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('trash') }}">
-        <i class="bi bi-trash3-fill me-2"></i>Trash Bin
-      </a>
-    </li>
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if request.endpoint == 'audit' %}active{% endif %}"
-         href="{{ url_for('audit') }}">
-        <i class="bi bi-clock-history me-2"></i>Audit Log
-      </a>
-    </li>
-    <li class="nav-item">
-      <a class="nav-link sidebar-link {% if 'users' in (request.endpoint or '') %}active{% endif %}"
-         href="{{ url_for('users_admin') }}">
-        <i class="bi bi-people-fill me-2"></i>Users
-      </a>
-    </li>
-    {% endif %}
-
-  </ul>
-
-  <!-- Footer -->
-  <div class="sidebar-footer">
-    {% if current_user %}
-    <div class="d-flex align-items-center gap-2 mb-2">
-      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
-           style="width:32px;height:32px;background:var(--cb-teal-dark);color:#fff;font-size:.8rem;font-weight:700;">
-        {{ (current_full_name or current_user)[:1]|upper }}
-      </div>
-      <div class="overflow-hidden">
-        <div class="text-white text-truncate" style="font-size:.8rem;line-height:1.1;">{{ current_full_name or current_user }}</div>
-        <small style="font-size:.65rem;color:{% if is_admin %}var(--cb-lime-light){% else %}rgba(200,216,240,.5){% endif %};text-transform:uppercase;letter-spacing:.05em;">
-          {% if is_admin %}<i class="bi bi-shield-lock-fill"></i> Administrator{% else %}User{% endif %}
-        </small>
-      </div>
-    </div>
-    {% endif %}
-    <div class="d-flex align-items-center justify-content-between">
-      <small>v1.0.0 &nbsp;·&nbsp; SA Compliance</small>
-      <form method="POST" action="{{ url_for('logout') }}" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-link p-0 text-white opacity-50 small" title="Sign out" aria-label="Sign out">
-          <i class="bi bi-box-arrow-right"></i>
-        </button>
+    <div class="appbar-tools">
+      <form class="appbar-search" method="GET" action="{{ url_for('compliance_list') }}" role="search">
+        <i class="bi bi-search" aria-hidden="true"></i>
+        <input name="q" type="search" placeholder="Search compliance items…" aria-label="Search" />
       </form>
+      <a class="appbar-icon" href="{{ url_for('dashboard') }}" title="Alerts" aria-label="Alerts"><i class="bi bi-bell"></i></a>
+      <a class="appbar-icon" href="{{ url_for('account_password') }}" title="Change password" aria-label="Change password"><i class="bi bi-key"></i></a>
+      {% if current_user %}
+      <div class="appbar-user">
+        <div class="appbar-avatar">{{ (current_full_name or current_user)[:2]|upper }}</div>
+        <div class="appbar-user-meta d-none d-lg-block">
+          <div class="appbar-user-name">{{ current_full_name or current_user }}</div>
+          <div class="appbar-user-role">{{ 'Administrator' if is_admin else 'User' }}</div>
+        </div>
+        <form method="POST" action="{{ url_for('logout') }}" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button type="submit" class="appbar-icon" title="Sign out" aria-label="Sign out"><i class="bi bi-box-arrow-right"></i></button>
+        </form>
+      </div>
+      {% endif %}
+      <button class="appbar-icon appbar-burger d-lg-none" id="navToggle" aria-label="Menu"><i class="bi bi-list"></i></button>
     </div>
+  </div>
+</header>
+
+<!-- Dashboard hero (other pages leave this empty) -->
+{% block hero %}{% endblock %}
+
+<!-- ═══ SECONDARY NAV (changes with the active primary section) ═══ -->
+{% if secondary_nav %}
+<nav class="subnav" aria-label="Section navigation">
+  <div class="subnav-inner">
+    {% for label, endpoint, icon in secondary_nav %}
+    <a class="subnav-link {{ 'active' if request.endpoint == endpoint }}"
+       href="{{ url_for(endpoint) }}"><i class="bi bi-{{ icon }}" aria-hidden="true"></i>{{ label }}</a>
+    {% endfor %}
   </div>
 </nav>
+{% endif %}
 
-<!-- ═══ MAIN CONTENT ═════════════════════════════════════════ -->
-<div id="main-content" class="main-content">
-
-  <!-- Top bar -->
-  <header class="topbar">
-    <div class="d-flex align-items-center gap-3">
-      <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary d-lg-none">
-        <i class="bi bi-list fs-5"></i>
-      </button>
-      <h6 class="mb-0 fw-semibold text-navy">{% block page_title %}Dashboard{% endblock %}</h6>
+<!-- Flash messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="app-flash">
+    {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show d-flex align-items-center gap-2 shadow-sm" role="alert">
+      {% if category == 'success' %}<i class="bi bi-check-circle-fill text-success"></i>
+      {% elif category == 'danger' %}<i class="bi bi-exclamation-triangle-fill text-danger"></i>
+      {% elif category == 'warning' %}<i class="bi bi-exclamation-circle-fill text-warning"></i>
+      {% else %}<i class="bi bi-info-circle-fill text-info"></i>{% endif %}
+      {{ message }}
+      <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
     </div>
-    <div class="d-flex align-items-center gap-2">
-      <span class="badge" style="background:rgba(43,170,173,.12);color:var(--cb-teal-dark);border:1px solid rgba(43,170,173,.3);">
-        <i class="bi bi-circle-fill me-1" style="font-size:.45rem;"></i>Live
-      </span>
-      <span class="text-muted" style="font-size:0.8rem;">{{ now().strftime('%d %b %Y') }}</span>
-      <a href="{{ url_for('account_password') }}" class="btn btn-sm btn-outline-secondary ms-1" title="Change password" aria-label="Change password">
-        <i class="bi bi-key"></i>
-      </a>
-      <form method="POST" action="{{ url_for('logout') }}" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-sm btn-outline-secondary" title="Sign out" aria-label="Sign out">
-          <i class="bi bi-box-arrow-right"></i>
-        </button>
-      </form>
-    </div>
-  </header>
-
-  <!-- Flash messages -->
-  <div class="px-4 pt-3">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for category, message in messages %}
-          <div class="alert alert-{{ category }} alert-dismissible fade show d-flex align-items-center gap-2 shadow-sm" role="alert">
-            {% if category == 'success' %}<i class="bi bi-check-circle-fill text-success"></i>
-            {% elif category == 'danger' %}<i class="bi bi-exclamation-triangle-fill text-danger"></i>
-            {% elif category == 'warning' %}<i class="bi bi-exclamation-circle-fill text-warning"></i>
-            {% else %}<i class="bi bi-info-circle-fill text-info"></i>{% endif %}
-            {{ message }}
-            <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
-          </div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
+    {% endfor %}
   </div>
+  {% endif %}
+{% endwith %}
 
-  <!-- Content -->
-  <main class="px-4 pb-5 pt-2">{% block content %}{% endblock %}</main>
-
-</div>
+<!-- ═══ CONTENT ══════════════════════════════════════════════════ -->
+<main class="app-main">
+  {% block page_header %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h1 class="h4 fw-bold text-navy mb-0">{% block page_title %}{% endblock %}</h1>
+    <span class="text-muted small d-none d-md-block">{{ now().strftime('%A, %d %B %Y') }}</span>
+  </div>
+  {% endblock %}
+  {% block content %}{% endblock %}
+</main>
 
 <script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 <script>
-  document.getElementById('sidebar-toggle')?.addEventListener('click', function () {
-    document.getElementById('sidebar').classList.toggle('sidebar-open');
+  document.getElementById('navToggle')?.addEventListener('click', function () {
+    document.querySelector('.appbar-nav')?.classList.toggle('open');
   });
 </script>
 
@@ -221,37 +110,30 @@
       </div>
       <div class="modal-body text-center py-4">
         <div class="display-4 fw-bold text-navy mb-2"><span id="idleCountdown">{{ logout_countdown }}</span>s</div>
-        <p class="text-muted mb-0">
-          You've been inactive. For your security you'll be signed out automatically.
-        </p>
+        <p class="text-muted mb-0">You've been inactive. For your security you'll be signed out automatically.</p>
       </div>
       <div class="modal-footer">
         <form method="POST" action="{{ url_for('logout') }}" id="idleLogoutForm" class="d-inline"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <input type="hidden" name="timeout" value="" id="idleTimeoutFlag">
           <button type="submit" class="btn btn-outline-secondary btn-sm">Sign out now</button>
         </form>
-        <button type="button" id="idleStay" class="btn btn-teal btn-sm px-4">
-          <i class="bi bi-check-lg me-1"></i>Stay signed in
-        </button>
+        <button type="button" id="idleStay" class="btn btn-teal btn-sm px-4"><i class="bi bi-check-lg me-1"></i>Stay signed in</button>
       </div>
     </div>
   </div>
 </div>
 <script>
-  // Inactivity warning popup with a countdown (only when "Stay logged in" was NOT chosen).
   (function () {
-    var IDLE_MS   = {{ idle_warning_after }} * 1000;   // idle time before the popup shows
-    var COUNTDOWN = {{ logout_countdown }};            // seconds counted down in the popup
+    var IDLE_MS   = {{ idle_warning_after }} * 1000;
+    var COUNTDOWN = {{ logout_countdown }};
     var modalEl = document.getElementById('idleModal');
     var modal = new bootstrap.Modal(modalEl);
     var cdEl = document.getElementById('idleCountdown');
     var idleTimer, countdownTimer, warning = false;
-
     function doLogout() {
       document.getElementById('idleTimeoutFlag').value = '1';
       document.getElementById('idleLogoutForm').submit();
     }
-
     function startWarning() {
       warning = true;
       var remaining = COUNTDOWN;
@@ -263,13 +145,11 @@
         if (remaining <= 0) { clearInterval(countdownTimer); doLogout(); }
       }, 1000);
     }
-
     function resetIdle() {
-      if (warning) return;                 // ignore passive activity while the popup is up
+      if (warning) return;
       clearTimeout(idleTimer);
       idleTimer = setTimeout(startWarning, IDLE_MS);
     }
-
     document.getElementById('idleStay').addEventListener('click', function () {
       clearInterval(countdownTimer);
       warning = false;
@@ -277,7 +157,6 @@
       fetch("{{ url_for('session_ping') }}", { method: 'POST', headers: { 'X-CSRF-Token': CSRF_TOKEN } }).catch(function () {});
       resetIdle();
     });
-
     ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"].forEach(function (evt) {
       document.addEventListener(evt, resetIdle, { passive: true });
     });

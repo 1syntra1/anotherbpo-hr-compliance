@@ -420,7 +420,7 @@ def test_submitted_gbs_claim_cannot_be_trashed(app_module, admin_client):
 def test_dashboard_health_and_notifications(app_module, admin_client):
     rid = open_record(admin_client, "cipc_bo", 2020, due_date="2020-01-01")
     html = admin_client.get("/").get_data(as_text=True)
-    assert "Overdue by" in html and "is overdue" in html and "Compliance health" in html
+    assert "Overdue by" in html and "is overdue" in html and "Compliance Health" in html
 
 
 def test_audit_has_before_after_for_employee_edit(app_module, admin_client):

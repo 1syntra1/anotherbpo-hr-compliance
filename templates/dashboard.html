@@ -1,370 +1,205 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
-{% block page_title %}Dashboard{% endblock %}
-
-{% block content %}
+{% block page_header %}{% endblock %}
 
 {% macro status_badge(r) -%}
   {%- set cls = {'overdue':'compliance-badge-red','due_soon':'compliance-badge-amber','upcoming':'compliance-badge-teal','done':'compliance-badge-green'}.get(r.state, 'bg-light text-secondary border') -%}
-  {%- set icon = {'overdue':'bi-exclamation-octagon-fill','due_soon':'bi-hourglass-split','upcoming':'bi-calendar3','done':'bi-check-circle-fill'}.get(r.state, 'bi-dash-circle') -%}
-  <span class="badge {{ cls }}"><i class="bi {{ icon }} me-1" aria-hidden="true"></i>{{ r.state_label }}</span>
+  <span class="badge {{ cls }}">{{ r.state_label }}</span>
 {%- endmacro %}
 
-<!-- ═══ Compliance health + notifications ═══ -->
-<div class="row g-3 mb-4">
-  <div class="col-lg-4">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="small text-muted fw-semibold text-uppercase mb-1">Compliance health</div>
-        <div class="d-flex align-items-end gap-2 mb-2">
-          <div class="display-5 fw-bold text-navy lh-1">{{ health.pct }}%</div>
-          <small class="text-muted mb-1">of due obligations completed</small>
-        </div>
-        <div class="progress mb-3" style="height:10px;" role="progressbar" aria-label="Compliance health"
-             aria-valuenow="{{ health.pct }}" aria-valuemin="0" aria-valuemax="100">
-          <div class="progress-bar" style="width:{{ health.pct }}%;background:var(--cb-teal-dark);"></div>
-        </div>
-        <ul class="list-unstyled small mb-0">
-          <li><i class="bi bi-check-circle-fill text-success me-1" aria-hidden="true"></i>Completed / submitted: <strong>{{ health.done }}</strong></li>
-          <li><i class="bi bi-hourglass-split text-warning me-1" aria-hidden="true"></i>Due within 30 days: <strong>{{ health.due_soon }}</strong></li>
-          <li><i class="bi bi-exclamation-octagon-fill text-danger me-1" aria-hidden="true"></i>Overdue: <strong>{{ health.overdue }}</strong></li>
-          <li><i class="bi bi-calendar3 text-secondary me-1" aria-hidden="true"></i>Upcoming: <strong>{{ health.upcoming }}</strong>{% if health.nodate %} · no due date: <strong>{{ health.nodate }}</strong>{% endif %}</li>
-        </ul>
-        {% if unverified_rules %}
-        <a href="{{ url_for('rules_register') }}" class="alert alert-warning d-block small py-2 mt-3 mb-0 text-decoration-none">
-          <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>{{ unverified_rules }} regulatory rule set{{ 's' if unverified_rules != 1 }} not yet verified
-        </a>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-8">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-bottom fw-semibold py-3">
-        <i class="bi bi-bell me-2 text-teal" aria-hidden="true"></i>Needs attention
-      </div>
-      <div class="list-group list-group-flush">
-        {% for level, text, rid in notices %}
-        <a href="{{ url_for('record_detail', record_id=rid) }}" class="list-group-item list-group-item-action small d-flex gap-2 align-items-start">
-          <i class="bi {{ {'danger':'bi-exclamation-octagon-fill text-danger','warning':'bi-exclamation-triangle-fill text-warning','info':'bi-info-circle-fill text-primary'}[level] }} mt-1" aria-hidden="true"></i>
-          <span>{{ text }}</span>
-        </a>
-        {% else %}
-        <div class="list-group-item small text-muted"><i class="bi bi-check2-all me-1" aria-hidden="true"></i>Nothing needs your attention right now.</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-</div>
+{% set pctmap = {'SUBMITTED':100,'ARCHIVED':100,'APPROVED':90,'AWAITING_REVIEW':70,'PREPARED':55,'REQUIRES_CHANGES':40,'DRAFT':15} %}
 
-<!-- ═══ Module status ═══ -->
+{% block hero %}
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-main">
+      <div class="hero-kicker">Dash BPO · HR Compliance Suite</div>
+      <h1 class="hero-title">People compliance.<br><span class="green">Business growth.</span></h1>
+      <p class="hero-sub">Stay compliant. Reduce risk. Empower your people.</p>
+    </div>
+    <aside class="hero-aside">
+      <div class="hero-date">{{ now().strftime('%A, %d %B %Y') }}</div>
+      <div class="hero-quote">“Compliance today.<br>A stronger tomorrow.”</div>
+    </aside>
+  </div>
+</section>
+{% endblock %}
+
+{% block content %}
+
+<!-- ═══ Stat tiles + Add New Record ═══ -->
 <div class="row g-3 mb-4">
-  {% for key, title, r in module_status %}
-  <div class="col-6 col-md-4 col-xl-2">
-    <a href="{{ url_for('record_detail', record_id=r.id) if r else url_for('compliance_list', module=key) }}"
-       class="card border-0 shadow-sm h-100 text-decoration-none">
-      <div class="card-body py-3">
-        <div class="small fw-semibold text-navy mb-1">{{ title }}</div>
-        {% if r %}
-          <div class="small text-muted mb-1">{{ r.period_label }} · {{ r.status_label }}</div>
-          {{ status_badge(r) }}
-        {% else %}
-          <span class="badge bg-light text-secondary border">No open period</span>
-        {% endif %}
+  <div class="col-xl-9">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm h-100"><div class="card-body stat-tile">
+          <div class="stat-ico" style="background:#e7f6ec;color:#2e9e4f;"><i class="bi bi-clipboard2-check"></i></div>
+          <div><div class="stat-num">{{ health.pct }}%</div><small class="text-muted">Compliance Health</small></div>
+        </div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <a href="{{ url_for('employees') }}" class="card border-0 shadow-sm h-100 text-decoration-none"><div class="card-body stat-tile">
+          <div class="stat-ico" style="background:#e8f0fb;color:#2f6fb0;"><i class="bi bi-people-fill"></i></div>
+          <div><div class="stat-num">{{ emp_count }}</div><small class="text-muted">Employees</small></div>
+        </div></a>
+      </div>
+      <div class="col-6 col-md-3">
+        <a href="{{ url_for('wsp_dashboard') }}" class="card border-0 shadow-sm h-100 text-decoration-none"><div class="card-body stat-tile">
+          <div class="stat-ico" style="background:#eef6e7;color:#5e8f15;"><i class="bi bi-mortarboard-fill"></i></div>
+          <div><div class="stat-num">{{ training_count }}</div><small class="text-muted">Training Records</small></div>
+        </div></a>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm h-100"><div class="card-body stat-tile">
+          <div class="stat-ico" style="background:#fdeaea;color:#d33b3b;"><i class="bi bi-exclamation-triangle-fill"></i></div>
+          <div><div class="stat-num">{{ health.overdue }}</div><small class="text-muted">Overdue Obligations</small></div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3">
+    <a href="{{ url_for('compliance_list') }}" class="card border-0 shadow-sm h-100 text-decoration-none"
+       style="background:linear-gradient(135deg,#5db85f,#3f9e45);color:#fff;">
+      <div class="card-body d-flex align-items-center gap-3">
+        <i class="bi bi-plus-circle-fill" style="font-size:2rem;"></i>
+        <div><div class="fw-bold">Add New Record</div><small style="opacity:.9;">Capture a compliance record, submission or document.</small></div>
       </div>
     </a>
   </div>
-  {% endfor %}
 </div>
 
-<!-- ═══ Compliance calendar ═══ -->
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-header bg-white border-bottom d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
-    <span class="fw-semibold"><i class="bi bi-calendar-event me-2 text-teal" aria-hidden="true"></i>Compliance calendar</span>
-    <a href="{{ url_for('compliance_list') }}" class="btn btn-sm btn-outline-secondary">All records &amp; new period</a>
-  </div>
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle">
-        <caption class="visually-hidden">Open compliance obligations ordered by urgency</caption>
-        <thead class="table-light">
-          <tr>
-            <th class="ps-4" scope="col">Obligation</th>
-            <th scope="col">Period</th>
-            <th scope="col">Due</th>
-            <th scope="col">Workflow</th>
-            <th scope="col">Owner / reviewer</th>
-            <th scope="col" class="pe-4">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in calendar %}
-          <tr>
-            <td class="ps-4"><a href="{{ url_for('record_detail', record_id=r.id) }}" class="fw-semibold">{{ r.title }}</a></td>
-            <td>{{ r.period_label }}</td>
-            <td class="text-nowrap">{{ r.due_date or '—' }}</td>
-            <td><span class="badge bg-light text-dark border">{{ r.status_label }}</span></td>
-            <td class="small">{{ r.owner_name or '—' }}<br><span class="text-muted">{{ r.reviewer_name or '—' }}</span></td>
-            <td class="pe-4">{{ status_badge(r) }}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">No open compliance periods. <a href="{{ url_for('compliance_list') }}">Open one</a>.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
+<!-- ═══ Compliance progress (donuts) + Upcoming + Calendar ═══ -->
 <div class="row g-3 mb-4">
-  <!-- Stats strip -->
-  <div class="col-12">
-    <div class="row g-3">
-      <div class="col-6 col-md-3">
-        <div class="card border-0 shadow-sm stat-card">
-          <div class="card-body d-flex align-items-center gap-3">
-            <div class="stat-icon bg-primary-subtle rounded-3 p-3">
-              <i class="bi bi-people-fill text-primary fs-4"></i>
-            </div>
-            <div>
-              <div class="fs-3 fw-bold lh-1">{{ emp_count }}</div>
-              <small class="text-muted">Employees</small>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card border-0 shadow-sm stat-card">
-          <div class="card-body d-flex align-items-center gap-3">
-            <div class="stat-icon bg-warning-subtle rounded-3 p-3">
-              <i class="bi bi-mortarboard-fill text-warning fs-4"></i>
-            </div>
-            <div>
-              <div class="fs-3 fw-bold lh-1">{{ training_count }}</div>
-              <small class="text-muted">Training Records</small>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card border-0 shadow-sm stat-card">
-          <div class="card-body d-flex align-items-center gap-3">
-            <div class="stat-icon bg-success-subtle rounded-3 p-3">
-              <i class="bi bi-shield-fill-check text-success fs-4"></i>
-            </div>
-            <div>
-              <div class="fs-3 fw-bold lh-1">{{ logs_count }}</div>
-              <small class="text-muted">LOGS Policies</small>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card border-0 shadow-sm stat-card">
-          <div class="card-body d-flex align-items-center gap-3">
-            <div class="stat-icon bg-danger-subtle rounded-3 p-3">
-              <i class="bi bi-award-fill text-danger fs-4"></i>
-            </div>
-            <div>
-              <div class="fs-3 fw-bold lh-1">
-                {{ bbbee_level or '—' }}
-              </div>
-              <small class="text-muted">B-BBEE (internal calc)</small>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Module cards 2×2 -->
-<div class="row g-4 mb-4">
-
-  <!-- Employment Equity -->
-  <div class="col-md-6">
-    <div class="card module-card mc-gbs border-0 shadow-sm h-100">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-start gap-3 mb-3">
-          <div class="module-icon mi-gbs rounded-3 p-3">
-            <i class="bi bi-bar-chart-steps fs-3"></i>
-          </div>
-          <div class="flex-grow-1">
-            <h5 class="card-title mb-1 fw-bold">Employment Equity</h5>
-            <p class="text-muted small mb-0">EEA2 &amp; EEA4 Submissions to the DoEL</p>
-          </div>
-        </div>
-        <p class="card-text text-secondary small">
-          Track your employment equity workforce profile across all occupational levels.
-          Generate EEA2 numerical goals reports and EEA4 income differential statements
-          for submission to the Department of Employment and Labour.
-        </p>
-        <div class="d-flex gap-2 mt-3">
-          <a href="{{ url_for('ee') }}" class="btn btn-teal btn-sm px-4">
-            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
-          </a>
-          <span class="badge bg-light text-dark border align-self-center">
-            <i class="bi bi-people me-1"></i>{{ emp_count }} employees
-          </span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- GBS -->
-  <div class="col-md-6">
-    <div class="card module-card mc-bbbee border-0 shadow-sm h-100">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-start gap-3 mb-3">
-          <div class="module-icon mi-bbbee rounded-3 p-3">
-            <i class="bi bi-globe2 fs-3"></i>
-          </div>
-          <div class="flex-grow-1">
-            <h5 class="card-title mb-1 fw-bold">GBS Incentive Claim</h5>
-            <p class="text-muted small mb-0">Global Business Services — the dtic</p>
-          </div>
-        </div>
-        <p class="card-text text-secondary small">
-          Manage your Global Business Services incentive claim to the dtic. Follow the
-          10-step submission checklist — from data export and supporting documents to
-          auditor sign-off and final upload.
-        </p>
-        <div class="d-flex gap-2 mt-3">
-          <a href="{{ url_for('gbs') }}" class="btn btn-teal btn-sm px-4">
-            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
-          </a>
-          <span class="badge bg-light text-dark border align-self-center">
-            <i class="bi bi-list-check me-1"></i>10-step checklist
-          </span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- WSP -->
-  <div class="col-md-6">
-    <div class="card module-card border-0 shadow-sm h-100">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-start gap-3 mb-3">
-          <div class="module-icon bg-warning rounded-3 p-3 text-white">
-            <i class="bi bi-mortarboard-fill fs-3"></i>
-          </div>
-          <div class="flex-grow-1">
-            <h5 class="card-title mb-1 fw-bold">WSP — Workplace Skills Plan</h5>
-            <p class="text-muted small mb-0">Skills Plan &amp; Annual Training Report (ATR)</p>
-          </div>
-        </div>
-        <p class="card-text text-secondary small">
-          Capture planned and completed training interventions. Submit your Workplace
-          Skills Plan and Annual Training Report to your SETA within its submission window
-          to qualify for mandatory grants.
-        </p>
-        <div class="d-flex gap-2 mt-3">
-          <a href="{{ url_for('wsp') }}" class="btn btn-warning btn-sm px-4 text-white">
-            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
-          </a>
-          <span class="badge bg-light text-dark border align-self-center">
-            <i class="bi bi-journal-bookmark me-1"></i>{{ training_count }} records
-          </span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- BBBEE -->
-  <div class="col-md-6">
-    <div class="card module-card border-0 shadow-sm h-100">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-start gap-3 mb-3">
-          <div class="module-icon bg-success rounded-3 p-3 text-white">
-            <i class="bi bi-award-fill fs-3"></i>
-          </div>
-          <div class="flex-grow-1">
-            <h5 class="card-title mb-1 fw-bold">BBBEE Scorecard</h5>
-            <p class="text-muted small mb-0">Generic, QSE &amp; EME Scorecards</p>
-          </div>
-        </div>
-        <p class="card-text text-secondary small">
-          Calculate your Broad-Based Black Economic Empowerment score across all
-          five elements. Supports Generic (109-point), QSE (100-point), and
-          EME (automatic) scorecards with live level calculation.
-        </p>
-        <div class="d-flex gap-2 mt-3">
-          <a href="{{ url_for('bbbee') }}" class="btn btn-success btn-sm px-4">
-            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
-          </a>
-          {% if bbbee_row %}
-          <span class="badge bbbee-level-badge level-{{ bbbee_row.bbbee_level }} align-self-center">
-            Level {{ bbbee_row.bbbee_level }}
-          </span>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- COIDA -->
-  <div class="col-md-6">
-    <div class="card module-card border-0 shadow-sm h-100">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-start gap-3 mb-3">
-          <div class="module-icon bg-danger rounded-3 p-3 text-white">
-            <i class="bi bi-shield-fill-check fs-3"></i>
-          </div>
-          <div class="flex-grow-1">
-            <h5 class="card-title mb-1 fw-bold">COIDA — Return of Earnings</h5>
-            <p class="text-muted small mb-0">W.As.8 &amp; Letter of Good Standing (LOGS)</p>
-          </div>
-        </div>
-        <p class="card-text text-secondary small">
-          Manage your annual Return of Earnings (W.As.8) to the Compensation Fund.
-          Track employees by COIDA class, calculate levy estimates, and maintain
-          your Letter of Good Standing (LOGS) status.
-        </p>
-        <div class="d-flex gap-2 mt-3">
-          <a href="{{ url_for('coida') }}" class="btn btn-danger btn-sm px-4">
-            <i class="bi bi-arrow-right-circle me-1"></i>Open Module
-          </a>
-          <span class="badge bg-light text-dark border align-self-center">
-            <i class="bi bi-file-earmark-text me-1"></i>{{ logs_count }} LOGS
-          </span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<!-- Quick Reference -->
-<div class="row g-4">
-  <div class="col-md-6">
+  <div class="col-xl-8">
     <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-bottom fw-semibold py-3">
-        <i class="bi bi-info-circle me-2 text-info"></i>Quick Reference
+      <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center py-3">
+        <span class="fw-semibold"><i class="bi bi-activity me-2 text-teal" aria-hidden="true"></i>Compliance Progress</span>
+        <small class="text-muted">Status of your key statutory obligations</small>
       </div>
       <div class="card-body">
-        <ul class="list-group list-group-flush">
-          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-link-45deg text-muted me-2"></i>EE Online Portal</span>
-            <a href="https://ee.labour.gov.za" target="_blank" class="btn btn-outline-primary btn-sm">Visit</a>
-          </li>
-          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-link-45deg text-muted me-2"></i>Compensation Fund</span>
-            <a href="https://www.labour.gov.za" target="_blank" class="btn btn-outline-danger btn-sm">Visit</a>
-          </li>
-          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-link-45deg text-muted me-2"></i>CIPC (Beneficial Ownership)</span>
-            <a href="https://www.cipc.co.za" target="_blank" class="btn btn-outline-warning btn-sm">Visit</a>
-          </li>
-          <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-download text-muted me-2"></i>Employee Template</span>
-            <a href="{{ url_for('employee_template') }}" class="btn btn-outline-secondary btn-sm">
-              <i class="bi bi-filetype-csv me-1"></i>CSV
+        <div class="row g-3 text-center">
+          {% for key, title, r in module_status %}
+          {% set pct = (pctmap.get(r.status, 10) if r else 0) %}
+          <div class="col-6 col-md-4 col-xl-2">
+            <a href="{{ url_for('record_detail', record_id=r.id) if r else url_for('compliance_list') }}" class="text-decoration-none">
+              <div class="donut" style="--val:{{ pct }};--ring:{{ '#3f9e45' if pct == 100 else ('#2BAAAD' if pct > 0 else '#c9d3df') }};"><span>{{ pct }}%</span></div>
+              <div class="small fw-semibold text-navy mt-2">{{ title }}</div>
+              <div class="small text-muted">{{ r.status_label if r else 'Not started' }}</div>
+              <div class="small text-muted">{% if r and r.due_date %}Due {{ r.due_date }}{% elif r %}No due date{% else %}No open period{% endif %}</div>
             </a>
-          </li>
-        </ul>
+          </div>
+          {% endfor %}
+        </div>
       </div>
     </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center py-3">
+        <span class="fw-semibold"><i class="bi bi-calendar-event me-2 text-teal" aria-hidden="true"></i>Upcoming Deadlines</span>
+        <a href="{{ url_for('compliance_list') }}" class="small">View all</a>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for r in upcoming %}
+        <a href="{{ url_for('record_detail', record_id=r.id) }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+          <span class="small"><span class="fw-semibold">{{ r.due_date }}</span><br><span class="text-muted">{{ r.title }}</span></span>
+          {{ status_badge(r) }}
+        </a>
+        {% else %}
+        <div class="list-group-item small text-muted">No dated deadlines open.</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-calendar3 me-2 text-teal" aria-hidden="true"></i>{{ cal_month_label }}</div>
+      <div class="card-body">
+        <table class="mini-cal">
+          <thead><tr>{% for d in cal_weekdays %}<th>{{ d }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for wk in cal_weeks %}
+            <tr>{% for c in wk %}
+              <td class="{{ 'muted' if not c.day }}{{ ' today' if c.today }}{{ ' due' if c.due }}">{% if c.day %}<span>{{ c.day }}</span>{% endif %}</td>
+            {% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="d-flex gap-3 mt-2 small text-muted">
+          <span><span class="d-inline-block rounded-circle" style="width:8px;height:8px;background:var(--nav-accent);"></span> Today</span>
+          <span><span class="d-inline-block rounded-circle" style="width:8px;height:8px;background:var(--cb-teal-dark);"></span> Due date</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Obligations + side panels ═══ -->
+<div class="row g-3">
+  <div class="col-xl-9">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom d-flex flex-wrap gap-2 align-items-center py-2">
+        <ul class="nav nav-pills gap-1" style="font-size:.85rem;">
+          <li class="nav-item"><span class="nav-link active py-1">Obligations</span></li>
+          <li class="nav-item"><a class="nav-link py-1 text-muted" href="{{ url_for('audit') if is_admin else url_for('compliance_list') }}">Recent Activity</a></li>
+          <li class="nav-item"><a class="nav-link py-1 text-muted" href="{{ url_for('wsp_documents_repo') }}">Documents</a></li>
+        </ul>
+        <a href="{{ url_for('compliance_list') }}" class="btn btn-sm btn-outline-secondary ms-auto"><i class="bi bi-plus-lg me-1"></i>New period</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" style="font-size:.88rem;">
+          <caption class="visually-hidden">Open compliance obligations</caption>
+          <thead class="table-light"><tr>
+            <th class="ps-4" scope="col">Obligation</th><th scope="col">Period</th><th scope="col">Due Date</th>
+            <th scope="col">Workflow</th><th scope="col">Owner / Reviewer</th><th scope="col" class="pe-4">Status</th>
+          </tr></thead>
+          <tbody>
+            {% for r in calendar %}
+            <tr>
+              <td class="ps-4"><a href="{{ url_for('record_detail', record_id=r.id) }}" class="fw-semibold text-decoration-none">{{ r.title }}</a></td>
+              <td>{{ r.period_label }}</td>
+              <td class="text-nowrap">{{ r.due_date or '—' }}</td>
+              <td><span class="badge bg-light text-dark border">{{ r.status_label }}</span></td>
+              <td class="small">{{ r.owner_name or '—' }}<br><span class="text-muted">{{ r.reviewer_name or '—' }}</span></td>
+              <td class="pe-4">{{ status_badge(r) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-4">No open compliance periods. <a href="{{ url_for('compliance_list') }}">Open one</a>.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-3">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-lightning-charge me-2 text-teal" aria-hidden="true"></i>Quick Actions</div>
+      <div class="card-body d-grid gap-2">
+        <a href="{{ url_for('employees') }}" class="btn btn-outline-secondary btn-sm text-start"><i class="bi bi-person-plus me-2"></i>Add Employee</a>
+        <a href="{{ url_for('wsp_documents_repo') }}" class="btn btn-outline-secondary btn-sm text-start"><i class="bi bi-upload me-2"></i>Upload Document</a>
+        <a href="{{ url_for('reports_hub') }}" class="btn btn-outline-secondary btn-sm text-start"><i class="bi bi-bar-chart me-2"></i>Run Compliance Report</a>
+      </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-graph-up me-2 text-teal" aria-hidden="true"></i>Reports &amp; Insights</div>
+      <div class="list-group list-group-flush">
+        <a href="{{ url_for('reports_hub') }}" class="list-group-item list-group-item-action small"><i class="bi bi-file-earmark-text me-2 text-muted"></i>Compliance Summary</a>
+        <a href="{{ url_for('compliance_list') }}" class="list-group-item list-group-item-action small"><i class="bi bi-clock-history me-2 text-muted"></i>Submission History</a>
+        <a href="{{ url_for('ee') }}" class="list-group-item list-group-item-action small"><i class="bi bi-people me-2 text-muted"></i>Employee Demographics</a>
+        <a href="{{ url_for('wsp_dashboard') }}" class="list-group-item list-group-item-action small"><i class="bi bi-mortarboard me-2 text-muted"></i>Training Report</a>
+      </div>
+    </div>
+    {% if notices %}
+    <div class="card border-0 shadow-sm mt-3">
+      <div class="card-header bg-white border-bottom fw-semibold py-3"><i class="bi bi-bell me-2 text-teal" aria-hidden="true"></i>Needs attention</div>
+      <div class="list-group list-group-flush">
+        {% for level, text, rid in notices[:5] %}
+        <a href="{{ url_for('record_detail', record_id=rid) }}" class="list-group-item list-group-item-action small">{{ text }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 

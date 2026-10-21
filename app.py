@@ -714,19 +714,45 @@ def dashboard():
             bbbee_level = "Non-compliant" if lvl == "NC" else "Level %s" % lvl
         except Exception:
             bbbee_level = None
+    import calendar as _cal
+    today = date.today()
+    upcoming = sorted([i for i in items if i.get("due_date") and i["state"] != "done"],
+                      key=lambda i: i["due_date"])[:5]
+    ym = today.strftime("%Y-%m")
+    due_days = {int(i["due_date"][8:10]) for i in items if i.get("due_date") and i["due_date"][:7] == ym}
+    cal_weeks = [[{"day": d or None, "today": d == today.day, "due": d in due_days and d != 0}
+                  for d in wk] for wk in _cal.Calendar(firstweekday=0).monthdayscalendar(today.year, today.month)]
+    health = rec.health(items)
     return render_template(
         "dashboard.html",
         calendar=items,
-        health=rec.health(items),
+        health=health,
         module_status=rec.module_status(items),
         notices=rec.notifications(db, items, g.user),
         unverified_rules=unverified_count(db),
         emp_count=db.execute("SELECT COUNT(*) FROM employees WHERE status='ACTIVE'").fetchone()[0],
-        training_count=db.execute("SELECT COUNT(*) FROM training_records").fetchone()[0],
+        training_count=db.execute("SELECT COUNT(*) FROM training_records").fetchone()[0]
+        + db.execute("SELECT COUNT(*) FROM training_events").fetchone()[0],
         logs_count=db.execute("SELECT COUNT(*) FROM logs_records").fetchone()[0],
         bbbee_level=bbbee_level,
+        upcoming=upcoming,
+        cal_weeks=cal_weeks,
+        cal_month_label=today.strftime("%B %Y"),
+        cal_weekdays=["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
         current_year=datetime.now().year,
     )
+
+
+@app.route("/reports")
+@login_required
+def reports_hub():
+    """Reports & insights hub — entry points to the reporting views."""
+    db = get_db()
+    emp_total = db.execute("SELECT COUNT(*) FROM employees WHERE status='ACTIVE'").fetchone()[0]
+    submissions = db.execute("SELECT COUNT(*) FROM submissions").fetchone()[0]
+    reports_made = db.execute("SELECT COUNT(*) FROM report_versions").fetchone()[0]
+    return render_template("reports.html", emp_total=emp_total, submissions=submissions,
+                           reports_made=reports_made)
 
 
 # ─── Compliance records ──────────────────────────────────────────────────────
@@ -3378,18 +3404,79 @@ def users_delete(user_id):
 
 # ── Template context processor ───────────────────────────────
 
+# ─── Navigation model (primary top nav + contextual secondary nav) ───────────
+
+def _nav_sections(is_admin):
+    """Primary sections; each carries the secondary (sub) nav shown when it is active."""
+    compliance = [
+        ("Compliance Records", "compliance_list", "folder2"),
+        ("Rules Register", "rules_register", "journal-check"),
+        ("Employment Equity", "ee", "bar-chart-steps"),
+        ("WSP / ATR", "wsp", "mortarboard"),
+        ("B-BBEE", "bbbee", "award"),
+        ("COIDA", "coida", "shield-check"),
+        ("GBS", "gbs", "globe2"),
+        ("CIPC Beneficial Ownership", "compliance_list", "diagram-3"),
+    ]
+    sections = [
+        {"key": "dashboard", "label": "Dashboard", "icon": "house-door", "endpoint": "dashboard",
+         "secondary": [("Compliance Overview", "dashboard", "grid-1x2")] + compliance},
+        {"key": "employees", "label": "Employees", "icon": "people", "endpoint": "employees",
+         "secondary": [("All Employees", "employees", "people"),
+                       ("Company Profile", "company", "building")]},
+        {"key": "compliance", "label": "Compliance", "icon": "clipboard2-check", "endpoint": "compliance_list",
+         "secondary": compliance},
+        {"key": "reports", "label": "Reports", "icon": "file-earmark-bar-graph", "endpoint": "reports_hub",
+         "secondary": [("Reports & Insights", "reports_hub", "file-earmark-bar-graph"),
+                       ("Training Report", "wsp_dashboard", "mortarboard"),
+                       ("Employee Demographics", "ee", "people"),
+                       ("Submission History", "compliance_list", "clock-history")]},
+        {"key": "documents", "label": "Documents", "icon": "folder2-open", "endpoint": "wsp_documents_repo",
+         "secondary": [("Document Repository", "wsp_documents_repo", "folder2-open")]},
+    ]
+    if is_admin:
+        sections.append({"key": "administration", "label": "Administration", "icon": "gear", "endpoint": "users_admin",
+                         "secondary": [("Users", "users_admin", "people"), ("Audit Log", "audit", "clock-history"),
+                                       ("Trash Bin", "trash", "trash3"), ("Company Profile", "company", "building")]})
+    return sections
+
+
+_SECTION_RULES = [
+    ("administration", ("users_admin", "audit", "trash")),
+    ("documents", ("wsp_documents_repo",)),
+    ("reports", ("reports_hub",)),
+    ("employees", ("employee", "company")),
+    ("compliance", ("compliance", "record", "rules", "ee", "wsp", "bbbee", "coida", "gbs", "cipc")),
+]
+
+
+def _active_section(endpoint):
+    e = endpoint or ""
+    for key, names in _SECTION_RULES:
+        if any(e == n or e.startswith(n) for n in names):
+            return key
+    return "dashboard"
+
+
 @app.context_processor
 def inject_now():
+    is_admin = bool(g.get("user")) and g.user["role"] == "admin"
+    sections = _nav_sections(is_admin)
+    active = _active_section(request.endpoint if request else None)
+    secondary = next((s["secondary"] for s in sections if s["key"] == active), [])
     return {
         "now": datetime.now,
         "current_user": session.get("username", ""),
         "current_full_name": session.get("full_name", session.get("username", "")),
         "current_role": g.user["role"] if g.get("user") else "",
-        "is_admin": bool(g.get("user")) and g.user["role"] == "admin",
+        "is_admin": is_admin,
         "session_remember": session.get("remember", False),
         "idle_warning_after": IDLE_WARNING_AFTER,
         "logout_countdown": LOGOUT_COUNTDOWN,
         "csrf_token": csrf_token,
+        "nav_sections": sections,
+        "active_section": active,
+        "secondary_nav": secondary,
     }
 
 
