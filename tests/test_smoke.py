@@ -4,9 +4,10 @@ import pytest
 from conftest import post
 
 PAGES = ["/", "/employees", "/ee", "/gbs", "/wsp", "/bbbee", "/coida", "/account/password",
-         "/employees/template", "/compliance", "/company", "/rules", "/compliance/1",
+         "/employees/template", "/compliance", "/rules", "/compliance/1",
          "/employees?status=ALL", "/employees?status=ARCHIVED&q=x&sort=start&level=Unskilled"]
-ADMIN_PAGES = ["/users", "/audit", "/trash"]
+# /company is a governance page: admin-only since the 2026-10-21 assessment (F1).
+ADMIN_PAGES = ["/users", "/audit", "/trash", "/company"]
 PUBLIC = ["/home", "/login", "/healthz"]
 
 

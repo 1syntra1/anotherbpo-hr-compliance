@@ -146,6 +146,24 @@ def security_headers(resp):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault(
+        "Permissions-Policy",
+        "geolocation=(), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()")
+    # Content-Security-Policy: all resources come from our own origin (Bootstrap is
+    # vendored locally, no CDNs). 'unsafe-inline' is still required because templates use
+    # inline <script> blocks and inline style="" attributes (e.g. the dashboard donuts).
+    # Future hardening: move inline scripts to per-request nonces and drop 'unsafe-inline'
+    # from script-src. Even as-is this blocks external script/resource injection,
+    # clickjacking, <base> hijacking and cross-origin form posting.
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; "
+        "frame-ancestors 'none'; form-action 'self'")
+    # HSTS only over HTTPS (behind the Coolify TLS proxy, ProxyFix sets the scheme). Sending
+    # it over plain HTTP would be ignored anyway; this avoids surprising local HTTP use.
+    if request.is_secure:
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     if session.get("logged_in"):
         # Employee data must not linger in the browser cache after sign-out.
         resp.headers["Cache-Control"] = "no-store"
@@ -1127,7 +1145,7 @@ def evidence_download(evidence_id):
 # ─── Company profile ─────────────────────────────────────────────────────────
 
 @app.route("/company", methods=["GET", "POST"])
-@login_required
+@admin_required
 def company():
     db = get_db()
     if request.method == "POST":
@@ -3422,8 +3440,7 @@ def _nav_sections(is_admin):
         {"key": "dashboard", "label": "Dashboard", "icon": "house-door", "endpoint": "dashboard",
          "secondary": [("Compliance Overview", "dashboard", "grid-1x2")] + compliance},
         {"key": "employees", "label": "Employees", "icon": "people", "endpoint": "employees",
-         "secondary": [("All Employees", "employees", "people"),
-                       ("Company Profile", "company", "building")]},
+         "secondary": [("All Employees", "employees", "people")]},
         {"key": "compliance", "label": "Compliance", "icon": "clipboard2-check", "endpoint": "compliance_list",
          "secondary": compliance},
         {"key": "reports", "label": "Reports", "icon": "file-earmark-bar-graph", "endpoint": "reports_hub",
