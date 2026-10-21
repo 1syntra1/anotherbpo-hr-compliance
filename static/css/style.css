@@ -564,7 +564,11 @@ body.landing-page {
 /* ── Login page ─────────────────────────────────────────────── */
 body.login-page {
   display: block;
-  background: linear-gradient(135deg, var(--cb-navy) 0%, #0e2244 60%, #133d52 100%);
+  /* Office photo at ~20% visibility: a ~80%-opaque navy overlay sits over it. */
+  background:
+    linear-gradient(135deg, rgba(27,58,107,.80) 0%, rgba(14,34,68,.82) 60%, rgba(19,61,82,.80) 100%),
+    url("../images/office-bg.jpg") center center / cover no-repeat fixed;
+  background-color: #0e2244;
   min-height: 100vh;
 }
 .login-card {
