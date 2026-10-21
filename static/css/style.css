@@ -564,9 +564,9 @@ body.landing-page {
 /* ── Login page ─────────────────────────────────────────────── */
 body.login-page {
   display: block;
-  /* Office photo at ~10% visibility: a ~90%-opaque navy overlay sits over it. */
+  /* Office photo at ~5% visibility: a darker ~95%-opaque navy overlay sits over it. */
   background:
-    linear-gradient(135deg, rgba(27,58,107,.90) 0%, rgba(14,34,68,.91) 60%, rgba(19,61,82,.90) 100%),
+    linear-gradient(135deg, rgba(9,24,46,.95) 0%, rgba(7,18,38,.96) 60%, rgba(10,30,50,.95) 100%),
     url("../images/office-bg.jpg") center center / cover no-repeat fixed;
   background-color: #0e2244;
   min-height: 100vh;
