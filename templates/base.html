@@ -48,8 +48,21 @@
   </div>
 </header>
 
-<!-- Dashboard hero (other pages leave this empty) -->
-{% block hero %}{% endblock %}
+<!-- ═══ HERO (shown on every page) ═══ -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-main">
+      <div class="hero-kicker">Dash BPO · HR Compliance Suite</div>
+      <div class="hero-title">People compliance.<br><span class="green">Business growth.</span></div>
+      <p class="hero-sub">Stay compliant. Reduce risk. Empower your people.</p>
+    </div>
+    <aside class="hero-aside">
+      <div class="hero-date">{{ now().strftime('%A, %d %B %Y') }}</div>
+      <div class="hero-quote">“{{ hero_quote }}”</div>
+    </aside>
+  </div>
+</section>
 
 <!-- ═══ SECONDARY NAV (changes with the active primary section) ═══ -->
 {% if secondary_nav %}
@@ -86,7 +99,6 @@
   {% block page_header %}
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <h1 class="h4 fw-bold text-navy mb-0">{% block page_title %}{% endblock %}</h1>
-    <span class="text-muted small d-none d-md-block">{{ now().strftime('%A, %d %B %Y') }}</span>
   </div>
   {% endblock %}
   {% block content %}{% endblock %}

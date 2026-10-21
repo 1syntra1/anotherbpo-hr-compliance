@@ -3460,11 +3460,14 @@ def _active_section(endpoint):
 
 @app.context_processor
 def inject_now():
+    import random
+    from modules.quotes import COMPLIANCE_QUOTES
     is_admin = bool(g.get("user")) and g.user["role"] == "admin"
     sections = _nav_sections(is_admin)
     active = _active_section(request.endpoint if request else None)
     secondary = next((s["secondary"] for s in sections if s["key"] == active), [])
     return {
+        "hero_quote": random.choice(COMPLIANCE_QUOTES),
         "now": datetime.now,
         "current_user": session.get("username", ""),
         "current_full_name": session.get("full_name", session.get("username", "")),

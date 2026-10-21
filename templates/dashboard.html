@@ -9,23 +9,6 @@
 
 {% set pctmap = {'SUBMITTED':100,'ARCHIVED':100,'APPROVED':90,'AWAITING_REVIEW':70,'PREPARED':55,'REQUIRES_CHANGES':40,'DRAFT':15} %}
 
-{% block hero %}
-<section class="hero">
-  <div class="hero-inner">
-    <div class="hero-glow" aria-hidden="true"></div>
-    <div class="hero-main">
-      <div class="hero-kicker">Dash BPO · HR Compliance Suite</div>
-      <h1 class="hero-title">People compliance.<br><span class="green">Business growth.</span></h1>
-      <p class="hero-sub">Stay compliant. Reduce risk. Empower your people.</p>
-    </div>
-    <aside class="hero-aside">
-      <div class="hero-date">{{ now().strftime('%A, %d %B %Y') }}</div>
-      <div class="hero-quote">“Compliance today.<br>A stronger tomorrow.”</div>
-    </aside>
-  </div>
-</section>
-{% endblock %}
-
 {% block content %}
 
 <!-- ═══ Stat tiles + Add New Record ═══ -->
