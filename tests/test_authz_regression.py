@@ -46,7 +46,7 @@ def test_admin_can_still_edit_company_profile(app_module, admin_client):
 # ── vertical privilege escalation: admin routes blocked for a normal user ─────
 
 def test_nonadmin_blocked_from_admin_get_routes(user_client):
-    for path in ("/users", "/audit", "/trash", "/company"):
+    for path in ("/users", "/audit", "/trash", "/company", "/rules"):
         r = user_client.get(path)
         assert r.status_code == 302, "%s should redirect a non-admin" % path
         assert "/login" not in r.headers["Location"], "%s logged the user out instead of blocking" % path

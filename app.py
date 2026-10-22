@@ -1178,7 +1178,7 @@ def company():
 # ─── Regulatory rules register ───────────────────────────────────────────────
 
 @app.route("/rules")
-@login_required
+@admin_required
 def rules_register():
     import json
     db = get_db()
@@ -3426,9 +3426,10 @@ def users_delete(user_id):
 
 def _nav_sections(is_admin):
     """Primary sections; each carries the secondary (sub) nav shown when it is active."""
-    compliance = [
-        ("Compliance Records", "compliance_list", "folder2"),
-        ("Rules Register", "rules_register", "journal-check"),
+    compliance = [("Compliance Records", "compliance_list", "folder2")]
+    if is_admin:  # Rules Register is admin-only (governance of statutory rule-sets)
+        compliance.append(("Rules Register", "rules_register", "journal-check"))
+    compliance += [
         ("Employment Equity", "ee", "bar-chart-steps"),
         ("WSP / ATR", "wsp", "mortarboard"),
         ("B-BBEE", "bbbee", "award"),
