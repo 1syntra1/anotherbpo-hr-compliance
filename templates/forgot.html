@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reset password — Dash BPO HR Compliance</title>
+  <link href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet" />
+  <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet" />
+  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet" />
+</head>
+<body class="login-page d-flex align-items-center justify-content-center min-vh-100 py-4">
+
+<div class="container" style="max-width:440px;">
+  <div class="card login-card">
+    <div class="login-body bg-white p-4 p-md-5">
+      <div class="text-center mb-4">
+        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Dash BPO" style="height:46px;width:auto;">
+      </div>
+      <h4 class="fw-bold text-navy mb-1">Reset your password</h4>
+      <p class="text-muted small mb-4">Enter your username or e-mail address and we'll send you a link to set a new password.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+          <div class="alert alert-{{ category }} py-2 mb-3"><span class="small">{{ message }}</span></div>
+        {% endfor %}{% endif %}
+      {% endwith %}
+
+      <form method="POST" action="{{ url_for('forgot_password') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <div class="mb-3">
+          <label for="identifier" class="form-label">Username or e-mail</label>
+          <div class="input-group">
+            <span class="input-group-text bg-light border-end-0" style="color:var(--cb-teal-dark);"><i class="bi bi-person-fill"></i></span>
+            <input type="text" class="form-control border-start-0" id="identifier" name="identifier"
+                   placeholder="you@dashbpo.com" required autofocus autocomplete="username" />
+          </div>
+        </div>
+        <button type="submit" class="btn btn-teal w-100 py-2 fw-semibold rounded-pill">
+          <i class="bi bi-envelope me-2"></i>Send reset link
+        </button>
+      </form>
+
+      <hr class="my-4" />
+      <p class="text-center mb-0">
+        <a href="{{ url_for('login') }}" class="text-muted small"><i class="bi bi-arrow-left me-1"></i>Back to sign in</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>

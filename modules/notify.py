@@ -15,16 +15,16 @@ _LOGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                      "static", "images", "email-logo.png")
 
 
-def _shell(heading, lines, app_url=""):
+def _shell(heading, lines, button_url="", button_text="Open the HR Compliance Suite"):
     body = "".join(
         '<p style="font-size:14px;color:#33465c;line-height:1.5;margin:0 0 12px">' + escape(line) + '</p>'
         for line in lines)
     button = ""
-    if app_url:
+    if button_url:
         button = ('<tr><td align="center" style="padding:6px 24px 26px">'
-                  '<a href="' + escape(app_url) + '" style="display:inline-block;background:#6aab1f;'
+                  '<a href="' + escape(button_url) + '" style="display:inline-block;background:#6aab1f;'
                   'color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:13px 30px;'
-                  'border-radius:6px">Open the HR Compliance Suite &rarr;</a></td></tr>')
+                  'border-radius:6px">' + escape(button_text) + ' &rarr;</a></td></tr>')
     return (
         '<!DOCTYPE html><html><body style="margin:0;padding:0;background:#eceff3">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eceff3">'
@@ -47,17 +47,20 @@ def _shell(heading, lines, app_url=""):
         '</table></td></tr></table></body></html>')
 
 
-def send(to, subject, heading, lines, text=None):
+def send(to, subject, heading, lines, text=None, button_url=None, button_text="Open the HR Compliance Suite"):
     """Send one branded notification. Returns True if sent. Never raises; no-ops when
-    the mailer is unconfigured or there are no recipients."""
+    the mailer is unconfigured or there are no recipients.
+
+    button_url: explicit action-button link; if None, falls back to APP_URL (app home)."""
     recips = [a for a in ([to] if isinstance(to, str) else list(to)) if a]
     if not recips:
         return False
     if not mailer.mailer_configured():
         log.info("notification skipped (mailer not configured): %s", subject)
         return False
-    app_url = os.environ.get("APP_URL", "").strip()
-    html = _shell(heading, lines, app_url)
+    if button_url is None:
+        button_url = os.environ.get("APP_URL", "").strip()
+    html = _shell(heading, lines, button_url, button_text)
     text = text or (heading + "\n\n" + "\n".join(lines))
     inline = {"logo": _LOGO} if os.path.exists(_LOGO) else None
     try:

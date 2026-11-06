@@ -678,6 +678,22 @@ def m009_training_events(db):
     """)
 
 
+# ─── 10. Password set/reset tokens (one-time links) ──────────────────────────
+
+def m010_password_reset_tokens(db):
+    _script(db, """
+        CREATE TABLE password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,     -- sha256 of the token; the token itself is never stored
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at TEXT NOT NULL,
+            used_at TEXT
+        );
+        CREATE INDEX ix_prt_user ON password_reset_tokens(user_id);
+    """)
+
+
 MIGRATIONS = [
     (1, "baseline schema", m001_baseline),
     (2, "security: sessions, lockout, immutable audit", m002_security),
@@ -688,6 +704,7 @@ MIGRATIONS = [
     (7, "WSP: bursary tracker + operational document store", m007_bursaries),
     (8, "WSP: learnership & internship plans", m008_learnerships),
     (9, "WSP: monthly training events (internal + external)", m009_training_events),
+    (10, "password set/reset one-time tokens", m010_password_reset_tokens),
 ]
 
 

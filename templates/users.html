@@ -59,6 +59,14 @@
                             data-bs-toggle="modal" data-bs-target="#resetModal{{ u.id }}" title="Reset password">
                       <i class="bi bi-key"></i>
                     </button>
+                    {% if u.email %}
+                    <form method="POST" action="{{ url_for('users_send_reset', user_id=u.id) }}" class="d-inline"
+                          onsubmit="return confirm({{ ('E-mail a password reset link to ' ~ u.username ~ '?')|tojson|forceescape }});"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-outline-secondary" title="E-mail a reset link" aria-label="E-mail a reset link to {{ u.username }}">
+                        <i class="bi bi-envelope-arrow-up"></i>
+                      </button>
+                    </form>
+                    {% endif %}
                     {% if u.username != current_user %}
                     <form method="POST" action="{{ url_for('users_toggle_role', user_id=u.id) }}" class="d-inline"
                           onsubmit="return confirm({{ ("Change " ~ u.username ~ "'s role?")|tojson|forceescape }});"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">

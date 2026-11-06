@@ -647,6 +647,121 @@ def logout():
     return redirect(url_for("landing"))
 
 
+# ─── Password set / reset via one-time link ──────────────────────────────────
+
+RESET_TOKEN_TTL_MIN = 60       # how long a link stays valid
+RESET_RESEND_SECONDS = 120     # anti-spam: skip issuing a new link if one was issued this recently
+
+
+def _hash_token(token):
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _issue_reset_token(db, user_id):
+    """Create a one-time token for a user; returns the plaintext token, or None if one was
+    issued very recently (anti-spam). Invalidates prior unused tokens. Does not commit."""
+    recent = db.execute(
+        "SELECT 1 FROM password_reset_tokens WHERE user_id=? AND used_at IS NULL "
+        "AND created_at > datetime('now', ?)", (user_id, "-%d seconds" % RESET_RESEND_SECONDS)).fetchone()
+    if recent:
+        return None
+    db.execute("DELETE FROM password_reset_tokens WHERE user_id=? AND used_at IS NULL", (user_id,))
+    token = secrets.token_urlsafe(32)
+    db.execute("INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) "
+               "VALUES (?,?, datetime('now', ?))", (user_id, _hash_token(token), "+%d minutes" % RESET_TOKEN_TTL_MIN))
+    return token
+
+
+def _validate_reset_token(db, token):
+    """Return (user_id, token_id) for a valid, unused, unexpired token, else None."""
+    if not token or len(token) > 200:
+        return None
+    row = db.execute(
+        "SELECT id, user_id FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL "
+        "AND expires_at > datetime('now')", (_hash_token(token),)).fetchone()
+    return (row["user_id"], row["id"]) if row else None
+
+
+def _reset_link(token):
+    base = os.environ.get("APP_URL", "").strip().rstrip("/")
+    return base + url_for("set_password", token=token)
+
+
+def _send_reset_link(user, token, welcome=False):
+    from modules import notify
+    link = _reset_link(token)
+    name = user["full_name"] or user["username"]
+    if welcome:
+        subject = "Set up your HR Compliance Suite account"
+        heading = "Welcome to the HR Compliance Suite"
+        lines = ["Hi %s," % name,
+                 "An account has been created for you. Use the button below to set your password and sign in.",
+                 "This link expires in %d minutes." % RESET_TOKEN_TTL_MIN,
+                 "If the button doesn't work, paste this link into your browser:", link]
+    else:
+        subject = "Reset your HR Compliance Suite password"
+        heading = "Password reset"
+        lines = ["Hi %s," % name,
+                 "We received a request to reset your password. Use the button below to choose a new one.",
+                 "This link expires in %d minutes. If you didn't request it, you can ignore this e-mail."
+                 % RESET_TOKEN_TTL_MIN,
+                 "If the button doesn't work, paste this link into your browser:", link]
+    return notify.send(user["email"], subject, heading, lines, button_url=link, button_text="Set your password")
+
+
+@app.route("/forgot", methods=["GET", "POST"])
+def forgot_password():
+    if g.get("user") is not None:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        ident = (request.form.get("identifier") or "").strip()[:254]
+        if ident:
+            db = get_db()
+            user = db.execute(
+                "SELECT id, username, full_name, email FROM users WHERE active=1 AND "
+                "(lower(username)=lower(?) OR lower(email)=lower(?))", (ident, ident)).fetchone()
+            if user and user["email"]:
+                token = _issue_reset_token(db, user["id"])
+                db.commit()
+                if token:
+                    _send_reset_link(user, token)
+            log_action("password_reset_requested", "auth", "Password reset requested", target=ident, username=ident)
+        # Identical response whether or not the account exists (no enumeration).
+        flash("If that account exists, a reset link has been sent to its e-mail address.", "info")
+        return redirect(url_for("login"))
+    return render_template("forgot.html")
+
+
+@app.route("/set-password/<token>", methods=["GET", "POST"])
+def set_password(token):
+    db = get_db()
+    v = _validate_reset_token(db, token)
+    if not v:
+        return render_template("set_password.html", invalid=True, token=token), 400
+    user_id, token_id = v
+    user = db.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
+    if request.method == "POST":
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        problem = "The passwords do not match." if new != confirm else password_problem(
+            new, user["username"] if user else "")
+        if problem:
+            flash(problem, "danger")
+            return render_template("set_password.html", invalid=False, token=token)
+        db.execute(
+            "UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=datetime('now'), "
+            "failed_logins=0, locked_until=NULL, session_version=session_version+1 WHERE id=?",
+            (generate_password_hash(new), user_id))
+        db.execute("UPDATE password_reset_tokens SET used_at=datetime('now') WHERE id=?", (token_id,))
+        log_action("password_set_via_link", "auth", "Password set via one-time link",
+                   entity="user", entity_id=user_id, username=(user["username"] if user else None), commit=False)
+        db.commit()
+        flash("Your password has been set. Please sign in.", "success")
+        return redirect(url_for("login"))
+    return render_template("set_password.html", invalid=False, token=token)
+
+
 # ─── Shared helpers for compliance records ───────────────────────────────────
 
 from modules import records as rec
@@ -3328,13 +3443,16 @@ def users_add():
                commit=False)
     db.commit()
     if email:
-        from modules import notify
-        notify.send(email, "Your HR Compliance Suite account",
-                    "Welcome to the HR Compliance Suite",
-                    ["An account has been created for you by an administrator.",
-                     "Username: %s" % username,
-                     "You'll be asked to set your own password the first time you sign in."])
-    flash(f"User '{username}' created ({role}). They must change the password at first sign-in.", "success")
+        token = _issue_reset_token(db, cur.lastrowid)
+        db.commit()
+        if token:
+            _send_reset_link({"username": username, "full_name": full_name or username, "email": email},
+                             token, welcome=True)
+        flash(f"User '{username}' created ({role}). An e-mail invitation to set their password has been sent.",
+              "success")
+    else:
+        flash(f"User '{username}' created ({role}). No e-mail on file, so share the sign-in details manually; "
+              "they must change the password at first sign-in.", "success")
     return redirect(url_for("users_admin"))
 
 
@@ -3360,6 +3478,31 @@ def users_reset(user_id):
                entity="user", entity_id=user_id, commit=False)
     db.commit()
     flash(f"Password reset for '{user['username']}'. They must change it at next sign-in.", "success")
+    return redirect(url_for("users_admin"))
+
+
+@app.route("/users/<int:user_id>/send-reset", methods=["POST"])
+@admin_required
+def users_send_reset(user_id):
+    db = get_db()
+    user = db.execute("SELECT id, username, full_name, email FROM users WHERE id=?", (user_id,)).fetchone()
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for("users_admin"))
+    if not user["email"]:
+        flash(f"'{user['username']}' has no e-mail address on file, so no link can be sent. Add one first.", "danger")
+        return redirect(url_for("users_admin"))
+    token = _issue_reset_token(db, user_id)
+    db.commit()
+    if not token:
+        flash(f"A reset link was sent to '{user['username']}' very recently — wait a minute before resending.", "warning")
+        return redirect(url_for("users_admin"))
+    ok = _send_reset_link(user, token)
+    log_action("password_reset_link_sent", "user", f"E-mailed a password reset link to '{user['username']}'",
+               target=user["username"], entity="user", entity_id=user_id)
+    flash(f"A reset link has been e-mailed to '{user['username']}'." if ok
+          else "Couldn't send the e-mail — check mail settings. No link was delivered.",
+          "success" if ok else "danger")
     return redirect(url_for("users_admin"))
 
 
