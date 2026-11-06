@@ -908,6 +908,19 @@ def record_details(record_id):
                 entity="compliance_record", entity_id=record_id,
                 before={k: r.get(k) for k in changes}, after=changes, commit=False)
         db.commit()
+        if changes:
+            from modules import notify
+            for field, role_label in (("reviewer_id", "reviewer"), ("owner_id", "owner")):
+                if changes.get(field):
+                    u = db.execute("SELECT full_name, username, email FROM users WHERE id=?",
+                                   (changes[field],)).fetchone()
+                    if u and u["email"]:
+                        what = "%s %s" % (rec.module_title(r["module"]), r["period_label"])
+                        notify.send(u["email"], "You've been assigned: %s" % what,
+                                    "New %s assignment" % role_label,
+                                    ["Hi %s," % (u["full_name"] or u["username"]),
+                                     "You've been assigned as the %s for %s." % (role_label, what),
+                                     "Open the HR Compliance Suite to see what's needed."])
         flash("Saved." if changes else "No changes.", "success" if changes else "info")
     except rec.WorkflowError as e:
         db.rollback()
@@ -961,6 +974,15 @@ def record_transition(record_id):
             entity="compliance_record", entity_id=record_id, before={"status": r["status"]}, after={"status": to},
             commit=False)
         db.commit()
+        admin_emails = [row["email"] for row in db.execute(
+            "SELECT email FROM users WHERE role='admin' AND active=1 AND email IS NOT NULL AND email<>''").fetchall()]
+        if admin_emails:
+            from modules import notify
+            what = "%s %s" % (rec.module_title(r["module"]), r["period_label"])
+            notify.send(admin_emails, "Workflow update: %s" % what, "Compliance record updated",
+                        ["%s moved from %s to %s." % (what, rec.STATUS_LABELS[r["status"]], rec.STATUS_LABELS[to]),
+                         "Action: %s" % action.replace("_", " "),
+                         "By: %s" % (g.user["full_name"] or g.user["username"])])
         flash("%s %s is now %s." % (rec.module_title(r["module"]), r["period_label"], rec.STATUS_LABELS[to]), "success")
     except rec.WorkflowError as e:
         db.rollback()
@@ -3305,6 +3327,13 @@ def users_add():
                after={"username": username, "role": role, "full_name": full_name, "email": email},
                commit=False)
     db.commit()
+    if email:
+        from modules import notify
+        notify.send(email, "Your HR Compliance Suite account",
+                    "Welcome to the HR Compliance Suite",
+                    ["An account has been created for you by an administrator.",
+                     "Username: %s" % username,
+                     "You'll be asked to set your own password the first time you sign in."])
     flash(f"User '{username}' created ({role}). They must change the password at first sign-in.", "success")
     return redirect(url_for("users_admin"))
 
