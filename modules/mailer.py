@@ -13,7 +13,9 @@ Configure via environment:
 
 Standard library only (urllib) — no extra dependency.
 """
+import base64
 import json
+import mimetypes
 import os
 import urllib.error
 import urllib.parse
@@ -73,9 +75,29 @@ def _recipients(to):
     return [a.strip() for a in parts if a and a.strip()]
 
 
-def send_mail(to, subject, text, html=None, timeout=20):
+def _inline_attachments(inline_images):
+    """Build Graph inline fileAttachment entries from {cid: filepath}."""
+    out = []
+    for cid, path in (inline_images or {}).items():
+        with open(path, "rb") as fh:
+            data = fh.read()
+        out.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": os.path.basename(path),
+            "contentId": cid,
+            "isInline": True,
+            "contentType": mimetypes.guess_type(path)[0] or "application/octet-stream",
+            "contentBytes": base64.b64encode(data).decode(),
+        })
+    return out
+
+
+def send_mail(to, subject, text, html=None, timeout=20, inline_images=None):
     """Send one e-mail from MAIL_FROM to `to` (list, or comma/semicolon string).
-    Returns the Graph HTTP status (202 on success). Raises MailError on any problem."""
+
+    inline_images: optional {content_id: file_path}; reference them in `html` as
+    <img src="cid:content_id">. Returns the Graph HTTP status (202 on success).
+    Raises MailError on any problem."""
     cfg = _cfg()
     miss = missing_config()
     if miss:
@@ -85,14 +107,15 @@ def send_mail(to, subject, text, html=None, timeout=20):
     if not recips:
         raise MailError("No recipients.")
     body = {"contentType": "HTML", "content": html} if html else {"contentType": "Text", "content": text}
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": body,
-            "toRecipients": [{"emailAddress": {"address": a}} for a in recips],
-        },
-        "saveToSentItems": False,
+    message = {
+        "subject": subject,
+        "body": body,
+        "toRecipients": [{"emailAddress": {"address": a}} for a in recips],
     }
+    attachments = _inline_attachments(inline_images)
+    if attachments:
+        message["attachments"] = attachments
+    payload = {"message": message, "saveToSentItems": False}
     token = _token(cfg, timeout)
     url = "%s/users/%s/sendMail" % (_GRAPH, urllib.parse.quote(cfg["sender"]))
     req = urllib.request.Request(

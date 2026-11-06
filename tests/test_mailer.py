@@ -47,11 +47,12 @@ def test_digest_render_orders_and_includes_items():
         {"level": "danger", "title": "WSP/ATR due 2026-04-30", "detail": "5 days left"},
         {"level": "warning", "title": "Log training", "detail": "last month empty"},
     ]
-    subject, text, html = sr.render(reminders, date(2026, 4, 25))
+    subject, text, html = sr.render(reminders, date(2026, 4, 25), logo_cid="logo")
     assert "3 items" in subject
     # danger sorts before warning before info
     assert text.index("WSP/ATR") < text.index("Log training") < text.index("Bursary")
-    assert "WSP/ATR due 2026-04-30" in html and "Overdue" in html
+    assert "WSP/ATR due 2026-04-30" in html and "OVERDUE" in html
+    assert 'src="cid:logo"' in html  # branded header logo wired in
 
 
 def test_digest_render_escapes_html():
