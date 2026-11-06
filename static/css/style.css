@@ -659,18 +659,26 @@ body.app-shell{ display:block; background:var(--app-bg); min-height:100vh; }
 .app-flash{ max-width:1600px; margin:0 auto; padding:.75rem 1.25rem 0; }
 
 /* Dashboard hero */
-.hero{ background:var(--nav-bg); color:#fff; }
+.hero{
+  background:
+    linear-gradient(90deg,#0d2947 0%,#0d2947 28%,rgba(13,41,71,.55) 46%,rgba(13,41,71,.18) 72%,rgba(13,41,71,.06) 100%),
+    url("../images/hero-building.jpg") center right / cover no-repeat;
+  background-color:#0d2947; color:#fff;
+}
 .hero-inner{ max-width:1600px; margin:0 auto; display:flex; align-items:stretch; gap:1.5rem; padding:1.6rem 1.25rem; position:relative; overflow:hidden; }
 .hero-main{ flex:1; z-index:1; }
 .hero-kicker{ text-transform:uppercase; letter-spacing:.09em; font-size:.72rem; color:rgba(255,255,255,.65); font-weight:600; }
 .hero-title{ font-size:clamp(1.7rem,4vw,2.7rem); font-weight:800; line-height:1.1; margin:.35rem 0 .5rem; }
 .hero-title .green{ color:var(--cb-lime-light); }
 .hero-sub{ color:rgba(255,255,255,.82); font-size:1rem; margin-bottom:0; }
-.hero-aside{ width:300px; background:rgba(0,0,0,.22); border-radius:.75rem; padding:1.1rem 1.25rem; display:flex; flex-direction:column; justify-content:center; z-index:1; }
+.hero-aside{ width:300px; background:rgba(9,20,40,.55); border:1px solid rgba(255,255,255,.08); border-radius:.75rem; padding:1.1rem 1.25rem; display:flex; flex-direction:column; justify-content:center; z-index:1; }
 .hero-date{ font-weight:700; font-size:.95rem; }
 .hero-quote{ font-style:italic; color:rgba(255,255,255,.82); margin-top:.6rem; font-size:1.05rem; line-height:1.4; }
 .hero-glow{ position:absolute; right:-70px; top:-80px; width:380px; height:380px; border-radius:50%; background:radial-gradient(circle, rgba(149,200,58,.20), transparent 70%); pointer-events:none; }
-@media(max-width:991.98px){ .hero-aside{ display:none; } }
+@media(max-width:991.98px){
+  .hero-aside{ display:none; }
+  .hero{ background:linear-gradient(90deg,#0d2947 0%,rgba(13,41,71,.78) 100%),url("../images/hero-building.jpg") center right / cover no-repeat; background-color:#0d2947; }
+}
 
 /* Donut progress rings */
 .donut{ position:relative; width:92px; height:92px; border-radius:50%;
